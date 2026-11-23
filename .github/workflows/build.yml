@@ -1,0 +1,45 @@
+name: Build Windows widget
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: ${{ !github.event.deleted }}
+    runs-on: windows-2025
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update --target x86_64-pc-windows-msvc
+
+      - name: Test
+        run: cargo +stable test --workspace --locked --target x86_64-pc-windows-msvc
+
+      - name: Build release executable
+        run: cargo +stable build --workspace --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Create release ZIP
+        run: >-
+          Compress-Archive
+          -LiteralPath 'target/x86_64-pc-windows-msvc/release/lamzu-widget.exe'
+          -DestinationPath 'target/LAMZU-Battery-Widget-windows-x64.zip'
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lamzu-battery-widget-windows-x64
+          path: target/LAMZU-Battery-Widget-windows-x64.zip
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true

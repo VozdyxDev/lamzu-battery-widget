@@ -1,0 +1,93 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - '**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lamzu-publish-release
+  queue: max
+
+jobs:
+  build:
+    if: ${{ github.event.created && !github.event.deleted }}
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tagged commit and its history
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the Windows archive from this run
+        uses: actions/download-artifact@v8
+        with:
+          name: lamzu-battery-widget-windows-x64
+          path: ${{ runner.temp }}/lamzu-release
+
+      - name: Generate changelog and publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          asset="$RUNNER_TEMP/lamzu-release/LAMZU-Battery-Widget-windows-x64.zip"
+          releases="$RUNNER_TEMP/lamzu-releases.json"
+          notes="$RUNNER_TEMP/lamzu-release-notes.md"
+
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$releases"
+          if jq -e --arg tag "$tag" 'any(.[][]; .tag_name == $tag and .draft == false)' "$releases" > /dev/null; then
+            printf 'Release %s is already published.\n' "$tag"
+            exit 0
+          fi
+          if jq -e --arg tag "$tag" 'any(.[][]; .tag_name == $tag and .draft == true)' "$releases" > /dev/null; then
+            printf 'A draft release already exists for %s.\n' "$tag" >&2
+            exit 1
+          fi
+
+          commit=$(git rev-parse --verify HEAD)
+          if ! tagged_commit=$(git rev-parse --verify --end-of-options "${GITHUB_REF}^{commit}") || [[ "$tagged_commit" != "$commit" ]]; then
+            printf 'Release tag %s no longer points to the commit built in this run.\n' "$tag" >&2
+            exit 1
+          fi
+          if [[ ! -s "$asset" ]]; then
+            printf 'The release archive is missing or empty: %s\n' "$asset" >&2
+            exit 1
+          fi
+
+          previous=$(jq -r '
+            [.[][] | select(.draft == false and .published_at != null)]
+            | sort_by(.published_at, .id) | last | .tag_name // empty
+          ' "$releases")
+          revision="$commit"
+          if [[ -n "$previous" ]]; then
+            if ! previous_commit=$(git rev-parse --verify --end-of-options "refs/tags/${previous}^{commit}"); then
+              printf 'The last published release tag %s is missing from Git.\n' "$previous" >&2
+              exit 1
+            fi
+            revision="$previous_commit..$commit"
+          fi
+
+          changes=$(git log --format='- %s (`%h`)' "$revision")
+          {
+            printf '## Changes\n\n'
+            if [[ -n "$changes" ]]; then
+              printf '%s\n' "$changes"
+            else
+              printf 'There are no new commits since the previous release.\n'
+            fi
+          } > "$notes"
+
+          gh release create --repo "$GITHUB_REPOSITORY" --verify-tag --title "LAMZU Battery Widget $tag" --notes-file "$notes" -- "$tag" "$asset"
