@@ -1,9 +1,7 @@
 name: Publish release
 
 on:
-  push:
-    tags:
-      - '**'
+  create:
 
 permissions:
   contents: read
@@ -14,7 +12,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event.created && !github.event.deleted }}
+    if: ${{ github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release/v') }}
     uses: ./.github/workflows/build.yml
 
   release:
@@ -24,12 +22,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out the tagged commit and its history
+      - name: Check out the release commit and its history
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-          persist-credentials: false
 
       - name: Download the Windows archive from this run
         uses: actions/download-artifact@v8
@@ -42,13 +39,43 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="$GITHUB_REF_NAME"
-          asset="$RUNNER_TEMP/lamzu-release/LAMZU-Battery-Widget-windows-x64.zip"
+          if [[ "$GITHUB_REF" != refs/heads/release/v* ]]; then
+            printf 'Expected a release/v* branch, got %s.\n' "$GITHUB_REF" >&2
+            exit 1
+          fi
+          tag="${GITHUB_REF_NAME#release/}"
+          tag_ref="refs/tags/$tag"
+          asset_name="LAMZU-Battery-Widget-windows-x64.zip"
+          asset="$RUNNER_TEMP/lamzu-release/$asset_name"
           releases="$RUNNER_TEMP/lamzu-releases.json"
           notes="$RUNNER_TEMP/lamzu-release-notes.md"
 
+          git check-ref-format "$tag_ref"
+          commit=$(git rev-parse --verify HEAD)
+          if [[ "$commit" != "$GITHUB_SHA" ]]; then
+            printf 'The checkout does not match the commit built in this run.\n' >&2
+            exit 1
+          fi
+
+          remote_tag=$(git ls-remote origin "$tag_ref" "$tag_ref^{}")
+          tagged_commit=$(awk -v ref="$tag_ref" '
+            $2 == ref { object = $1 }
+            $2 == ref "^{}" { peeled = $1 }
+            END { print (peeled ? peeled : object) }
+          ' <<< "$remote_tag")
+          if [[ -n "$tagged_commit" && "$tagged_commit" != "$commit" ]]; then
+            printf 'Release tag %s points to a different commit.\n' "$tag" >&2
+            exit 1
+          fi
+
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$releases"
           if jq -e --arg tag "$tag" 'any(.[][]; .tag_name == $tag and .draft == false)' "$releases" > /dev/null; then
+            if [[ "$tagged_commit" != "$commit" ]] || ! jq -e --arg tag "$tag" --arg asset "$asset_name" '
+              any(.[][]; .tag_name == $tag and .draft == false and any(.assets[]?; .name == $asset))
+            ' "$releases" > /dev/null; then
+              printf 'The published release %s lacks the expected tag or archive.\n' "$tag" >&2
+              exit 1
+            fi
             printf 'Release %s is already published.\n' "$tag"
             exit 0
           fi
@@ -57,11 +84,6 @@ jobs:
             exit 1
           fi
 
-          commit=$(git rev-parse --verify HEAD)
-          if ! tagged_commit=$(git rev-parse --verify --end-of-options "${GITHUB_REF}^{commit}") || [[ "$tagged_commit" != "$commit" ]]; then
-            printf 'Release tag %s no longer points to the commit built in this run.\n' "$tag" >&2
-            exit 1
-          fi
           if [[ ! -s "$asset" ]]; then
             printf 'The release archive is missing or empty: %s\n' "$asset" >&2
             exit 1
@@ -90,4 +112,19 @@ jobs:
             fi
           } > "$notes"
 
+          if [[ -z "$tagged_commit" ]]; then
+            git -c push.followTags=false push --force-with-lease="$tag_ref:" origin "$commit:$tag_ref"
+          fi
           gh release create --repo "$GITHUB_REPOSITORY" --verify-tag --title "LAMZU Battery Widget $tag" --notes-file "$notes" -- "$tag" "$asset"
+
+      - name: Delete the published release branch
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/release/v* ]]; then
+            printf 'Refusing to delete a branch outside release/v*: %s\n' "$GITHUB_REF" >&2
+            exit 1
+          fi
+          remote_branch=$(git ls-remote --refs origin "$GITHUB_REF")
+          if [[ -n "$remote_branch" ]]; then
+            git -c push.followTags=false push --force-with-lease="$GITHUB_REF:$GITHUB_SHA" origin ":$GITHUB_REF"
+          fi

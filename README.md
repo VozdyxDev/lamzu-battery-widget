@@ -41,9 +41,9 @@ cargo build --workspace --release
 
 ## Builds and Releases
 
-Each push to a branch runs the Windows x64 tests and build. The workflow uploads `LAMZU-Battery-Widget-windows-x64.zip` as a build artifact. [Build workflow](.github/workflows/build.yml)
+Pushes to regular branches run the Windows x64 tests and build. The workflow uploads `LAMZU-Battery-Widget-windows-x64.zip` as a build artifact. [Build workflow](.github/workflows/build.yml)
 
-Pushing a new tag uses the same build to publish the ZIP in a GitHub release. The changelog lists commits since the previous published release. The first release lists the full history reachable from its tag. [Release workflow](.github/workflows/release.yml)
+Creating a branch matching `release/v**` on GitHub starts the release workflow. For example, `release/v0.1.0` runs the same build, creates the `v0.1.0` tag, and publishes the ZIP with a changelog. The changelog lists commits since the previous published release. The first release lists the full history reachable from its tag. After publication, the workflow deletes the release branch if its tip still matches the released commit. [Release workflow](.github/workflows/release.yml)
 
 ## Supported Devices
 
