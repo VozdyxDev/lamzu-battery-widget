@@ -1,5 +1,7 @@
 # LAMZU Battery Widget
 
+<img src="docs/screenshots/receiver-connected.png" width="288" alt="LAMZU Battery Widget showing battery level over a 2.4 GHz connection">
+
 [Русская версия](README-ru.md)
 
 A Windows 10 and 11 desktop widget for a LAMZU mouse. It shows the connection status, battery percentage, time since the last query, and time until the next query. Both timers show seconds for durations under a minute. The widget sits behind the desktop icons in the upper-right corner of the primary display and lets mouse clicks pass through.
@@ -7,6 +9,26 @@ A Windows 10 and 11 desktop widget for a LAMZU mouse. It shows the connection st
 ## AI Disclaimer
 
 The code and documentation were created with assistance from **OpenAI Codex**, an AI coding assistant.
+
+## Demonstration Screenshots
+
+The widget rendered these examples with sample readings.
+
+| Charging over USB | Connected over 2.4 GHz |
+| --- | --- |
+| <img src="docs/screenshots/usb-charging.png" width="288" alt="USB charging with a yellow lightning indicator"> | <img src="docs/screenshots/receiver-connected.png" width="288" alt="Wireless connection with the battery level and query timers"> |
+| **Receiver connected, mouse unavailable** | **Mouse disconnected** |
+| <img src="docs/screenshots/receiver-no-response.png" width="288" alt="Receiver connected and waiting for the mouse to respond"> | <img src="docs/screenshots/disconnected.png" width="288" alt="Mouse disconnected with the battery level hidden"> |
+
+## Download and Use
+
+1. Download `LAMZU-Battery-Widget-windows-x64.zip` from [GitHub Releases](https://github.com/VozdyxDev/lamzu-battery-widget/releases).
+2. Extract the ZIP and double-click `lamzu-widget.exe`.
+3. Connect the mouse by USB or through the LAMZU receiver. The widget appears in the upper-right corner of the desktop behind the icons.
+
+From the extracted folder, run `.\lamzu-widget.exe --quit` in PowerShell to close the widget or `.\lamzu-widget.exe --demo` to view it with sample readings.
+
+If Windows reports a missing `VCRUNTIME140.dll`, install the x64 runtime. [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 
 ## Build and Run
 
@@ -16,8 +38,6 @@ You need Rust 1.89 or later and Visual Studio Build Tools with the Desktop devel
 cargo build --workspace --release
 .\target\release\lamzu-widget.exe
 ```
-
-Run `.\target\release\lamzu-widget.exe --quit` to stop the widget. Run with `--demo` to preview its placement with sample data, without accessing the mouse or the cache.
 
 ## Builds and Releases
 

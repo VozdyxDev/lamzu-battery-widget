@@ -1,5 +1,7 @@
 # LAMZU Battery Widget
 
+<img src="docs/screenshots/receiver-connected.png" width="288" alt="LAMZU Battery Widget показывает заряд мыши при подключении по 2,4 ГГц">
+
 [English version](README.md)
 
 Виджет для мыши LAMZU работает на рабочем столе Windows 10 и 11. Он показывает статус подключения, процент заряда, время с последнего запроса и до следующего. Оба таймера показывают секунды при длительности меньше минуты. Виджет располагается за значками рабочего стола в правом верхнем углу основного монитора и пропускает щелчки.
@@ -7,6 +9,26 @@
 ## Дисклеймер об использовании ИИ
 
 Код и документация подготовлены с помощью ИИ-ассистента **OpenAI Codex**.
+
+## Демонстрационные скриншоты
+
+Виджет отрисовал эти примеры с демонстрационными показаниями.
+
+| Зарядка по USB | Подключение по 2,4 ГГц |
+| --- | --- |
+| <img src="docs/screenshots/usb-charging.png" width="288" alt="Зарядка по USB с жёлтой молнией"> | <img src="docs/screenshots/receiver-connected.png" width="288" alt="Беспроводное подключение с показанием заряда и временем замеров"> |
+| **Приёмник подключён, мышь не отвечает** | **Мышь отключена** |
+| <img src="docs/screenshots/receiver-no-response.png" width="288" alt="Приёмник подключён и ждёт ответа мыши"> | <img src="docs/screenshots/disconnected.png" width="288" alt="Мышь отключена, значение заряда скрыто"> |
+
+## Загрузка и использование
+
+1. Скачайте `LAMZU-Battery-Widget-windows-x64.zip` со страницы [релизов GitHub](https://github.com/VozdyxDev/lamzu-battery-widget/releases).
+2. Распакуйте ZIP и дважды щёлкните `lamzu-widget.exe`.
+3. Подключите мышь кабелем или через приёмник LAMZU. Карточка появится за значками в правом верхнем углу рабочего стола.
+
+Из папки с распакованным виджетом выполните в PowerShell `.\lamzu-widget.exe --quit`, чтобы закрыть его, или `.\lamzu-widget.exe --demo`, чтобы посмотреть пример показаний.
+
+Если Windows сообщает об отсутствии `VCRUNTIME140.dll`, установите среду выполнения для x64. [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/ru-ru/cpp/windows/latest-supported-vc-redist)
 
 ## Сборка и запуск
 
@@ -16,8 +38,6 @@
 cargo build --workspace --release
 .\target\release\lamzu-widget.exe
 ```
-
-Чтобы остановить виджет, выполните `.\target\release\lamzu-widget.exe --quit`. Запуск с `--demo` позволяет проверить положение карточки с примером данных без обращения к мыши или кэшу.
 
 ## Сборки и релизы
 
