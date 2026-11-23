@@ -1,0 +1,11 @@
+[workspace]
+members = ["lamzu-hid", "lamzu-widget"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.89"
+version = "0.1.0"
+
+[workspace.dependencies]
+windows-sys = "0.61.2"
