@@ -1,10 +1,8 @@
-use std::{mem, ptr::null_mut, slice};
+use std::{mem, ptr::null_mut};
 
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, POINT, RECT},
-    Graphics::Gdi::{
-        BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS, DeleteObject,
-    },
+    System::LibraryLoader::GetModuleHandleW,
     UI::{
         HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi},
         Shell::{
@@ -24,6 +22,7 @@ use crate::{
 
 pub const CALLBACK_MESSAGE: u32 = WM_APP + 4;
 const ICON_ID: u32 = 1;
+const LBW_ICON_RESOURCE: usize = 1;
 const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
 
 const ENGLISH: u32 = 1;
@@ -81,7 +80,12 @@ impl Tray {
             return;
         }
 
-        let icon = battery_icon();
+        let custom_icon = application_icon();
+        let icon = if custom_icon.is_null() {
+            unsafe { LoadIconW(null_mut(), IDI_APPLICATION) }
+        } else {
+            custom_icon
+        };
         if icon.is_null() {
             return;
         }
@@ -99,7 +103,9 @@ impl Tray {
         let added = unsafe {
             Shell_NotifyIconW(NIM_ADD, &data) != 0 || Shell_NotifyIconW(NIM_MODIFY, &data) != 0
         };
-        unsafe { DestroyIcon(icon) };
+        if !custom_icon.is_null() {
+            unsafe { DestroyIcon(custom_icon) };
+        }
         if added {
             let mut data = icon_data(self.hwnd);
             data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
@@ -316,81 +322,16 @@ impl Drop for PopupMenu {
     }
 }
 
-fn battery_icon() -> HICON {
-    const ART: [&[u8; 16]; 16] = [
-        b"................",
-        b"................",
-        b"...##########...",
-        b"..#++++++++++#..",
-        b".#++++++++++++#.",
-        b".#+=======---+#.",
-        b".#+=======---++#",
-        b".#+=======---++#",
-        b".#+=======---++#",
-        b".#+=======---++#",
-        b".#+=======---+#.",
-        b".#++++++++++++#.",
-        b"..#++++++++++#..",
-        b"...##########...",
-        b"................",
-        b"................",
-    ];
-
-    let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) }.clamp(16, 64);
-    let info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: size,
-            biHeight: -size,
-            biPlanes: 1,
-            biBitCount: 32,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let mut bits = null_mut();
-    let color =
-        unsafe { CreateDIBSection(null_mut(), &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0) };
-    if color.is_null() {
-        return null_mut();
+fn application_icon() -> HICON {
+    let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) }.max(16);
+    unsafe {
+        LoadImageW(
+            GetModuleHandleW(null_mut()),
+            LBW_ICON_RESOURCE as *const u16,
+            IMAGE_ICON,
+            size,
+            size,
+            LR_DEFAULTCOLOR,
+        )
     }
-    if bits.is_null() {
-        unsafe { DeleteObject(color) };
-        return null_mut();
-    }
-
-    let width = size as usize;
-    let mask_stride = width.div_ceil(16) * 2;
-    let mut masks = vec![0_u8; mask_stride * width];
-    let pixels = unsafe { slice::from_raw_parts_mut(bits.cast::<u32>(), width * width) };
-    for (y, row) in pixels.chunks_exact_mut(width).enumerate() {
-        for (x, pixel) in row.iter_mut().enumerate() {
-            *pixel = match ART[y * 16 / width][x * 16 / width] {
-                b'#' => 0xff16_1d27,
-                b'+' => 0xfff3_f7fc,
-                b'=' => 0xff68_dea5,
-                b'-' => 0xff3a_4759,
-                _ => {
-                    masks[y * mask_stride + x / 8] |= 0x80 >> (x % 8);
-                    0
-                }
-            };
-        }
-    }
-
-    let mask = unsafe { CreateBitmap(size, size, 1, 1, masks.as_ptr().cast()) };
-    let mut icon = null_mut();
-    if !mask.is_null() {
-        icon = unsafe {
-            CreateIconIndirect(&ICONINFO {
-                fIcon: 1,
-                hbmMask: mask,
-                hbmColor: color,
-                ..Default::default()
-            })
-        };
-        unsafe { DeleteObject(mask) };
-    }
-    unsafe { DeleteObject(color) };
-    icon
 }

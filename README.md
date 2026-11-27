@@ -1,6 +1,7 @@
 # LAMZU Battery Widget
 
 <img src="docs/screenshots/en/receiver-connected.png" width="288" alt="LAMZU Battery Widget showing battery level over a 2.4 GHz connection">
+<img src="lamzu-widget/assets/lbw.png" width="146" alt="LBW logo">
 
 [Русская версия](README-ru.md)
 
@@ -29,7 +30,7 @@ Download either Windows x64 package from the [GitHub Releases page](https://gith
 
 Connect the mouse by USB or through the LAMZU receiver. The widget appears behind the desktop icons.
 
-Left-click the battery icon in the Windows notification area to hide or show the card. The widget starts with the card visible each time. Right-click the icon to change the language, toggle startup at sign-in, or close the application. Windows may place the icon among the hidden icons.
+Left-click the LBW icon in the Windows notification area to hide or show the card. The widget starts with the card visible each time. Right-click the icon to change the language, toggle startup at sign-in, or close the application. Windows may place the icon among the hidden icons.
 
 Use **Monitor** and **Position** in the same menu to move the card. The widget saves both settings in the Windows registry for your account. If the selected monitor disconnects, the card moves to the same corner of the primary monitor and returns when that monitor reconnects.
 
@@ -48,7 +49,7 @@ The selected language applies immediately and is used the next time the widget s
 
 ## Build and Run
 
-You need Rust 1.89 or later and Visual Studio Build Tools with the Desktop development with C++ workload.
+You need Rust 1.89 or later, Visual Studio Build Tools with the Desktop development with C++ workload, and the Windows SDK.
 
 ```powershell
 cargo build --workspace --release

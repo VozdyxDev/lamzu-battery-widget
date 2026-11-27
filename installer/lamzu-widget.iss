@@ -23,6 +23,7 @@ MinVersion=10.0
 AppMutex=Local\LamzuWallpaperMonitor
 RestartApplications=no
 UsePreviousTasks=no
+SetupIconFile=..\lamzu-widget\assets\lbw.ico
 UninstallDisplayIcon={app}\{#AppExe}
 OutputDir=..\target
 OutputBaseFilename=LAMZU-Battery-Widget-windows-x64-setup
