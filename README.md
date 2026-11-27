@@ -1,10 +1,10 @@
 # LAMZU Battery Widget
 
-<img src="docs/screenshots/receiver-connected.png" width="288" alt="LAMZU Battery Widget showing battery level over a 2.4 GHz connection">
+<img src="docs/screenshots/en/receiver-connected.png" width="288" alt="LAMZU Battery Widget showing battery level over a 2.4 GHz connection">
 
 [Русская версия](README-ru.md)
 
-A Windows 10 and 11 desktop widget for a LAMZU mouse. It shows the connection status, battery percentage, time since the last query, and time until the next query. Both timers show seconds for durations under a minute. The widget sits behind the desktop icons in the upper-right corner of the primary display and lets mouse clicks pass through.
+A Windows 10 and 11 desktop widget for a LAMZU mouse. It shows the connection status, battery percentage, time since the last query, and time until the next query. Both timers show seconds for durations under a minute. The widget sits behind the desktop icons and lets mouse clicks pass through. Its default position is the upper-right corner of the primary monitor.
 
 ## AI Disclaimer
 
@@ -16,19 +16,35 @@ The widget rendered these examples with sample readings.
 
 | Charging over USB | Connected over 2.4 GHz |
 | --- | --- |
-| <img src="docs/screenshots/usb-charging.png" width="288" alt="USB charging with a yellow lightning indicator"> | <img src="docs/screenshots/receiver-connected.png" width="288" alt="Wireless connection with the battery level and query timers"> |
+| <img src="docs/screenshots/en/usb-charging.png" width="288" alt="USB charging with a yellow lightning indicator"> | <img src="docs/screenshots/en/receiver-connected.png" width="288" alt="Wireless connection with the battery level and query timers"> |
 | **Receiver connected, mouse unavailable** | **Mouse disconnected** |
-| <img src="docs/screenshots/receiver-no-response.png" width="288" alt="Receiver connected and waiting for the mouse to respond"> | <img src="docs/screenshots/disconnected.png" width="288" alt="Mouse disconnected with the battery level hidden"> |
+| <img src="docs/screenshots/en/receiver-no-response.png" width="288" alt="Receiver connected and waiting for the mouse to respond"> | <img src="docs/screenshots/en/disconnected.png" width="288" alt="Mouse disconnected with the battery level hidden"> |
 
 ## Download and Use
 
-1. Download `LAMZU-Battery-Widget-windows-x64.zip` from [GitHub Releases](https://github.com/VozdyxDev/lamzu-battery-widget/releases).
-2. Extract the ZIP and double-click `lamzu-widget.exe`.
-3. Connect the mouse by USB or through the LAMZU receiver. The widget appears in the upper-right corner of the desktop behind the icons.
+Download either Windows x64 package from the [GitHub Releases page](https://github.com/VozdyxDev/lamzu-battery-widget/releases).
 
-From the extracted folder, run `.\lamzu-widget.exe --quit` in PowerShell to close the widget or `.\lamzu-widget.exe --demo` to view it with sample readings.
+- **Installer** (`LAMZU-Battery-Widget-windows-x64-setup.exe`). Run Setup to install the widget for your account and add a Start menu shortcut. The option to start the widget when you sign in is selected by default. You can uninstall the widget from Windows Settings.
+- **Portable** (`LAMZU-Battery-Widget-windows-x64.zip`). Extract the ZIP and double-click `lamzu-widget.exe`.
 
-If Windows reports a missing `VCRUNTIME140.dll`, install the x64 runtime. [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
+Connect the mouse by USB or through the LAMZU receiver. The widget appears behind the desktop icons.
+
+Left-click the battery icon in the Windows notification area to hide or show the card. The widget starts with the card visible each time. Right-click the icon to change the language, toggle startup at sign-in, or close the application. Windows may place the icon among the hidden icons.
+
+Use **Monitor** and **Position** in the same menu to move the card. The widget saves both settings in the Windows registry for your account. If the selected monitor disconnects, the card moves to the same corner of the primary monitor and returns when that monitor reconnects.
+
+Run these commands in PowerShell from the extracted folder or the installation folder. Setup uses `%LOCALAPPDATA%\Programs\LAMZU Battery Widget` by default.
+
+| Command | Result |
+| --- | --- |
+| `.\lamzu-widget.exe --lang EN` | Switch to English, the default, and save the choice. |
+| `.\lamzu-widget.exe --lang RU` | Switch to Russian and save the choice. |
+| `.\lamzu-widget.exe --autostart` or `.\lamzu-widget.exe -a` | Start this copy of the widget when you sign in to Windows. |
+| `.\lamzu-widget.exe --autostart-remove` or `.\lamzu-widget.exe -arm` | Turn off startup for your account. |
+| `.\lamzu-widget.exe --quit` | Close the widget. |
+| `.\lamzu-widget.exe --demo` | Open the widget with sample readings after closing any running instance. |
+
+The selected language applies immediately and is used the next time the widget starts. If you move a portable copy that starts with Windows, run `--autostart` again from its new folder.
 
 ## Build and Run
 
@@ -41,9 +57,9 @@ cargo build --workspace --release
 
 ## Builds and Releases
 
-Pushes to regular branches run the Windows x64 tests and build. The workflow uploads `LAMZU-Battery-Widget-windows-x64.zip` as a build artifact. [Build workflow](.github/workflows/build.yml)
+Pushes to regular branches run the Windows x64 tests and build. The workflow uploads the Inno Setup installer and portable ZIP. [Build workflow](.github/workflows/build.yml)
 
-Creating a branch matching `release/v**` on GitHub starts the release workflow. For example, `release/v0.1.0` runs the same build, creates the `v0.1.0` tag, and publishes the ZIP with a changelog. The changelog lists commits since the previous published release. The first release lists the full history reachable from its tag. After publication, the workflow deletes the release branch if its tip still matches the released commit. [Release workflow](.github/workflows/release.yml)
+Creating a branch matching `release/v**` on GitHub starts the release workflow. For example, `release/v0.1.0` runs the same build, creates the `v0.1.0` tag, and publishes both packages with a changelog. The changelog lists commits since the previous published release. The first release lists the full history reachable from its tag. After publication, the workflow deletes the release branch if its tip still matches the released commit. [Release workflow](.github/workflows/release.yml)
 
 ## Supported Devices
 
