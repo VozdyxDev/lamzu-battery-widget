@@ -1,13 +1,12 @@
-use std::{io, mem::size_of, ptr::null_mut};
+use std::{io, ptr::null_mut};
 
 use windows_sys::Win32::{
-    Foundation::{HMODULE, HWND, LPARAM, LRESULT, POINT, WPARAM},
-    Graphics::Gdi::{
-        GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MapWindowPoints, MonitorFromPoint,
-    },
+    Foundation::{HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM},
+    Graphics::Gdi::MapWindowPoints,
     UI::{
         HiDpi::{
-            DPI_AWARENESS_CONTEXT, GetDpiForWindow, GetWindowDpiAwarenessContext,
+            DPI_AWARENESS_CONTEXT, DPI_AWARENESS_PER_MONITOR_AWARE,
+            GetAwarenessFromDpiAwarenessContext, GetDpiForWindow, GetWindowDpiAwarenessContext,
             SetThreadDpiAwarenessContext,
         },
         WindowsAndMessaging::*,
@@ -18,6 +17,7 @@ use crate::{
     app::{PROJECT_NAME, wide},
     card,
     composition::Composition,
+    display::{CardLayout, Corner, Monitor},
 };
 
 const SPAWN_WORKER: u32 = 0x052C;
@@ -223,24 +223,43 @@ impl Layer {
         }
     }
 
-    pub fn render(&mut self, data: &card::Contents) -> io::Result<()> {
+    pub fn render(
+        &mut self,
+        data: &card::Contents,
+        monitor: &Monitor,
+        corner: Corner,
+        changed: bool,
+    ) -> io::Result<()> {
         let _context = Context::match_window(self.desktop.parent);
-        let dpi = unsafe { GetDpiForWindow(self.card) }.max(96);
-        let width = card::scale(card::WIDTH, dpi);
-        let height = card::scale(card::HEIGHT, dpi);
-        let margin = card::scale(24, dpi);
-        let monitor = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
-        let mut info = MONITORINFO {
-            cbSize: size_of::<MONITORINFO>() as u32,
-            ..Default::default()
+        let awareness = unsafe {
+            GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(self.desktop.parent))
         };
-        if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
-            return Err(io::Error::last_os_error());
+        // A DPI-virtualized Explorer parent expects sizes in its own coordinate space.
+        let monitor_dpi = if awareness == DPI_AWARENESS_PER_MONITOR_AWARE {
+            monitor.dpi()
+        } else {
+            None
+        };
+        let dpi = monitor_dpi.unwrap_or_else(|| unsafe { GetDpiForWindow(self.card) }.max(96));
+        let CardLayout {
+            mut position,
+            width,
+            height,
+        } = CardLayout::new(monitor.work_area()?, corner, dpi);
+        // A secondary display's scale can change while the tray window stays on the primary.
+        let mut current = RECT::default();
+        if !changed
+            && unsafe { GetWindowRect(self.card, &mut current) } != 0
+            && (current.left, current.top, current.right, current.bottom)
+                == (
+                    position.x,
+                    position.y,
+                    position.x + width,
+                    position.y + height,
+                )
+        {
+            return Ok(());
         }
-        let mut position = POINT {
-            x: (info.rcWork.right - width - margin).max(info.rcWork.left),
-            y: info.rcWork.top + margin,
-        };
         unsafe { MapWindowPoints(null_mut(), self.desktop.parent, &mut position, 1) };
 
         let frame = card::paint(data, width, height, dpi)?;

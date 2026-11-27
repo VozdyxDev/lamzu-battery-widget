@@ -13,7 +13,7 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow},
 };
 
-use crate::app::wide;
+use crate::{app::wide, locale::Language};
 
 pub const WIDTH: i32 = 288;
 pub const HEIGHT: i32 = 146;
@@ -40,6 +40,7 @@ pub fn scale(value: i32, dpi: u32) -> i32 {
 
 #[derive(PartialEq, Eq)]
 pub struct Contents {
+    language: Language,
     status: &'static str,
     status_color: COLORREF,
     percent: Option<u8>,
@@ -50,32 +51,41 @@ pub struct Contents {
 }
 
 impl Contents {
-    pub fn waiting() -> Self {
+    pub fn waiting(language: Language) -> Self {
+        let text = language.text();
         Self {
-            status: "Поиск мыши…",
+            language,
+            status: text.waiting,
             status_color: MUTED,
             percent: None,
             charge_state: None,
-            no_battery: "Ожидаем первый замер",
-            last_check: check_line("Последний замер", None),
-            next_check: next_check_line(None),
+            no_battery: text.first_query,
+            last_check: check_line(language, text.last_query, None),
+            next_check: next_check_line(language, None),
         }
     }
 
-    pub fn demo() -> Self {
+    pub fn demo(language: Language) -> Self {
+        let text = language.text();
         Self {
-            status: "Подключена по USB · демонстрация",
+            language,
+            status: text.demo,
             status_color: GREEN,
             percent: Some(78),
             charge_state: Some(ChargeState::Charging),
             no_battery: "",
-            last_check: check_line("Последний замер", Some(Duration::from_secs(13))),
-            next_check: next_check_line(Some(Duration::from_secs(17))),
+            last_check: check_line(language, text.last_query, Some(Duration::from_secs(13))),
+            next_check: next_check_line(language, Some(Duration::from_secs(17))),
         }
     }
 
-    pub fn from_poll(snapshot: &Snapshot, failed: bool, until_next: Option<Duration>) -> Self {
-        Self::from_poll_at(snapshot, failed, until_next, SystemTime::now())
+    pub fn from_poll(
+        snapshot: &Snapshot,
+        failed: bool,
+        until_next: Option<Duration>,
+        language: Language,
+    ) -> Self {
+        Self::from_poll_at(snapshot, failed, until_next, SystemTime::now(), language)
     }
 
     fn from_poll_at(
@@ -83,17 +93,19 @@ impl Contents {
         failed: bool,
         until_next: Option<Duration>,
         now: SystemTime,
+        language: Language,
     ) -> Self {
+        let text = language.text();
         let (status, status_color) = match snapshot.connection {
-            Connection::Absent => ("Мышь не найдена", MUTED),
-            Connection::Cable => ("Подключена по USB", GREEN),
+            Connection::Absent => (text.absent, MUTED),
+            Connection::Cable => (text.cable, GREEN),
             Connection::Receiver => match snapshot.link {
-                LinkCheck::Confirmed(_) => ("Связь 2,4 ГГц подтверждена", GREEN),
-                LinkCheck::NoResponse => ("Приёмник · мышь не ответила", AMBER),
-                _ => ("Приёмник подключён", BLUE),
+                LinkCheck::Confirmed(_) => (text.receiver_confirmed, GREEN),
+                LinkCheck::NoResponse => (text.receiver_no_response, AMBER),
+                _ => (text.receiver, BLUE),
             },
-            Connection::Ambiguous => ("Найдено несколько устройств", AMBER),
-            Connection::Unavailable => ("Статус недоступен", AMBER),
+            Connection::Ambiguous => (text.ambiguous, AMBER),
+            Connection::Unavailable => (text.unavailable, AMBER),
         };
 
         let transport = match (snapshot.connection, snapshot.link) {
@@ -108,6 +120,7 @@ impl Contents {
             .last_attempt
             .and_then(|attempt| now.duration_since(attempt.completed_at).ok());
         Self {
+            language,
             status,
             status_color,
             percent: visible_battery.map(|sample| sample.percent),
@@ -115,41 +128,45 @@ impl Contents {
             no_battery: if visible_battery.is_some() {
                 ""
             } else if failed {
-                "Замер недоступен"
+                text.query_failed
             } else {
-                "Заряд пока неизвестен"
+                text.battery_unknown
             },
-            last_check: check_line("Последний замер", since_last),
-            next_check: next_check_line(until_next),
+            last_check: check_line(language, text.last_query, since_last),
+            next_check: next_check_line(language, until_next),
         }
     }
 }
 
-fn next_check_line(remaining: Option<Duration>) -> String {
-    const LABEL: &str = "До следующего запроса";
+fn next_check_line(language: Language, remaining: Option<Duration>) -> String {
+    let text = language.text();
     if let Some(delay) = remaining.filter(|delay| delay.as_secs() < 60) {
         let seconds = delay.as_secs() + u64::from(delay.subsec_nanos() != 0);
-        format!("{LABEL} · {seconds} сек")
+        format!("{} · {seconds} {}", text.next_query, text.seconds)
     } else {
-        check_line(LABEL, remaining)
+        check_line(language, text.next_query, remaining)
     }
 }
 
-fn check_line(label: &str, duration: Option<Duration>) -> String {
+fn check_line(language: Language, label: &str, duration: Option<Duration>) -> String {
     let Some(duration) = duration else {
         return format!("{label} · —");
     };
+    let text = language.text();
     let seconds = duration.as_secs();
     if seconds < 60 {
-        return format!("{label} · {seconds} сек");
+        return format!("{label} · {seconds} {}", text.seconds);
     }
     let minutes = seconds / 60;
     let hours = minutes / 60;
     let minutes = minutes % 60;
     if hours == 0 {
-        format!("{label} · {minutes} мин")
+        format!("{label} · {minutes} {}", text.minutes)
     } else {
-        format!("{label} · {hours} ч {minutes} мин")
+        format!(
+            "{label} · {hours} {} {minutes} {}",
+            text.hours, text.minutes
+        )
     }
 }
 
@@ -157,6 +174,7 @@ pub fn paint(data: &Contents, width: i32, height: i32, dpi: u32) -> io::Result<C
     let mut canvas = Canvas::new(width, height)?;
     canvas.fill(TRANSPARENT_PIXEL);
 
+    let text = data.language.text();
     let s = |value| scale(value, dpi);
     canvas.round(0, 0, width, height, s(16), OUTLINE);
     canvas.round(s(1), s(1), width - s(1), height - s(1), s(15), SURFACE);
@@ -167,7 +185,7 @@ pub fn paint(data: &Contents, width: i32, height: i32, dpi: u32) -> io::Result<C
         canvas.polygon(&bolt, YELLOW);
     }
     canvas.text(
-        "Мышь LAMZU",
+        text.title,
         row(34, 12, 272, 34, dpi),
         s(16),
         FW_SEMIBOLD,
@@ -190,8 +208,8 @@ pub fn paint(data: &Contents, width: i32, height: i32, dpi: u32) -> io::Result<C
             TEXT,
         );
         let charge_label = match data.charge_state {
-            Some(ChargeState::Charging) => Some(("Зарядка", YELLOW)),
-            Some(ChargeState::Full) => Some(("Полный заряд", MUTED)),
+            Some(ChargeState::Charging) => Some((text.charging, YELLOW)),
+            Some(ChargeState::Full) => Some((text.fully_charged, MUTED)),
             _ => None,
         };
         let gauge_top = if let Some((label, color)) = charge_label {
@@ -484,7 +502,7 @@ mod tests {
 
     #[test]
     fn status_dot_has_symmetric_antialiased_edges() {
-        let canvas = paint(&Contents::waiting(), WIDTH, HEIGHT, 96).unwrap();
+        let canvas = paint(&Contents::waiting(Language::Russian), WIDTH, HEIGHT, 96).unwrap();
         let (left, top, diameter) = STATUS_DOT;
         let pixel = |x, y| canvas.pixels()[((top + y) * WIDTH + left + x) as usize];
         let background = pixel(0, 0);
@@ -523,6 +541,7 @@ mod tests {
             false,
             Some(Duration::from_secs(7199)),
             now,
+            Language::Russian,
         );
         let width = WIDTH * 2;
         let canvas = paint(&card, width, HEIGHT * 2, 192).unwrap();
@@ -537,44 +556,67 @@ mod tests {
 
     #[test]
     fn time_rows_show_seconds_below_a_minute() {
+        let language = Language::Russian;
         const LAST: &str = "Последний замер";
-        assert_eq!(check_line(LAST, None), "Последний замер · —");
+        assert_eq!(check_line(language, LAST, None), "Последний замер · —");
         assert_eq!(
-            check_line(LAST, Some(Duration::ZERO)),
+            check_line(language, LAST, Some(Duration::ZERO)),
             "Последний замер · 0 сек"
         );
         assert_eq!(
-            check_line(LAST, Some(Duration::from_millis(59_999))),
+            check_line(language, LAST, Some(Duration::from_millis(59_999))),
             "Последний замер · 59 сек"
         );
         assert_eq!(
-            check_line(LAST, Some(Duration::from_secs(60))),
+            check_line(language, LAST, Some(Duration::from_secs(60))),
             "Последний замер · 1 мин"
         );
-        assert_eq!(next_check_line(None), "До следующего запроса · —");
+        assert_eq!(next_check_line(language, None), "До следующего запроса · —");
         assert_eq!(
-            next_check_line(Some(Duration::ZERO)),
+            next_check_line(language, Some(Duration::ZERO)),
             "До следующего запроса · 0 сек"
         );
         assert_eq!(
-            next_check_line(Some(Duration::from_millis(1))),
+            next_check_line(language, Some(Duration::from_millis(1))),
             "До следующего запроса · 1 сек"
         );
         assert_eq!(
-            next_check_line(Some(Duration::from_secs(30))),
+            next_check_line(language, Some(Duration::from_secs(30))),
             "До следующего запроса · 30 сек"
         );
         assert_eq!(
-            next_check_line(Some(Duration::from_millis(59_999))),
+            next_check_line(language, Some(Duration::from_millis(59_999))),
             "До следующего запроса · 60 сек"
         );
         assert_eq!(
-            next_check_line(Some(Duration::from_secs(60))),
+            next_check_line(language, Some(Duration::from_secs(60))),
             "До следующего запроса · 1 мин"
         );
         assert_eq!(
-            next_check_line(Some(Duration::from_secs(3_720))),
+            next_check_line(language, Some(Duration::from_secs(3_720))),
             "До следующего запроса · 1 ч 2 мин"
+        );
+    }
+
+    #[test]
+    fn english_uses_english_status_and_time_units() {
+        let language = Language::English;
+        let disconnected = Snapshot {
+            connection: Connection::Absent,
+            ..Snapshot::default()
+        };
+        let card = Contents::from_poll_at(&disconnected, false, None, UNIX_EPOCH, language);
+        assert_eq!(card.status, "Mouse not found");
+        assert_eq!(card.no_battery, "Battery level unknown");
+        assert_eq!(card.last_check, "Last query · —");
+        assert_eq!(card.next_check, "Until next query · —");
+
+        let demo = Contents::demo(language);
+        assert_eq!(demo.last_check, "Last query · 13 s");
+        assert_eq!(demo.next_check, "Until next query · 17 s");
+        assert_eq!(
+            next_check_line(language, Some(Duration::from_secs(3_720))),
+            "Until next query · 1 h 2 min"
         );
     }
 
@@ -603,6 +645,7 @@ mod tests {
             false,
             Some(Duration::from_secs(30)),
             finished + Duration::from_secs(5),
+            Language::Russian,
         );
         assert_eq!(card.last_check, "Последний замер · 5 сек");
         assert_eq!(card.next_check, "До следующего запроса · 30 сек");
@@ -624,7 +667,7 @@ mod tests {
             }),
             ..Snapshot::default()
         };
-        let visible = Contents::from_poll_at(&snapshot, false, None, time);
+        let visible = Contents::from_poll_at(&snapshot, false, None, time, Language::Russian);
         assert_eq!(visible.percent, Some(73));
         assert_eq!(visible.charge_state, Some(ChargeState::Charging));
 
@@ -632,7 +675,7 @@ mod tests {
             connection: Connection::Absent,
             ..snapshot
         };
-        let card = Contents::from_poll_at(&disconnected, false, None, time);
+        let card = Contents::from_poll_at(&disconnected, false, None, time, Language::Russian);
         assert_eq!(card.percent, None);
         assert_eq!(card.charge_state, None);
 
@@ -641,7 +684,7 @@ mod tests {
             link: LinkCheck::Confirmed(time),
             ..snapshot
         };
-        let card = Contents::from_poll_at(&receiver, false, None, time);
+        let card = Contents::from_poll_at(&receiver, false, None, time, Language::Russian);
         assert_eq!(card.percent, None);
         assert_eq!(card.charge_state, None);
     }
