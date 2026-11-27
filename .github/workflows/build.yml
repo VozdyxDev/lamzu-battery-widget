@@ -28,19 +28,33 @@ jobs:
         run: cargo +stable test --workspace --locked --target x86_64-pc-windows-msvc
 
       - name: Build release executable
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
         run: cargo +stable build --workspace --release --locked --target x86_64-pc-windows-msvc
 
-      - name: Create release ZIP
+      - name: Create portable ZIP
         run: >-
           Compress-Archive
           -LiteralPath 'target/x86_64-pc-windows-msvc/release/lamzu-widget.exe'
           -DestinationPath 'target/LAMZU-Battery-Widget-windows-x64.zip'
 
+      - name: Build Inno Setup installer
+        run: |
+          if ($env:GITHUB_REF_NAME -cmatch '^release/v([0-9]+\.[0-9]+\.[0-9]+)$') {
+            $version = $Matches[1]
+          } else {
+            $metadata = cargo +stable metadata --format-version 1 --no-deps --locked | ConvertFrom-Json
+            $version = ($metadata.packages | Where-Object name -eq 'lamzu-widget').version
+          }
+          iscc /Qp "/DAppVersion=$version" installer/lamzu-widget.iss
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7
         with:
           name: lamzu-battery-widget-windows-x64
-          path: target/LAMZU-Battery-Widget-windows-x64.zip
+          path: |
+            target/LAMZU-Battery-Widget-windows-x64.zip
+            target/LAMZU-Battery-Widget-windows-x64-setup.exe
           if-no-files-found: error
           compression-level: 0
           overwrite: true

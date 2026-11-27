@@ -28,7 +28,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Download the Windows archive from this run
+      - name: Download the Windows packages from this run
         uses: actions/download-artifact@v8
         with:
           name: lamzu-battery-widget-windows-x64
@@ -45,8 +45,14 @@ jobs:
           fi
           tag="${GITHUB_REF_NAME#release/}"
           tag_ref="refs/tags/$tag"
-          asset_name="LAMZU-Battery-Widget-windows-x64.zip"
-          asset="$RUNNER_TEMP/lamzu-release/$asset_name"
+          asset_names=(
+            'LAMZU-Battery-Widget-windows-x64.zip'
+            'LAMZU-Battery-Widget-windows-x64-setup.exe'
+          )
+          assets=()
+          for name in "${asset_names[@]}"; do
+            assets+=("$RUNNER_TEMP/lamzu-release/$name")
+          done
           releases="$RUNNER_TEMP/lamzu-releases.json"
           notes="$RUNNER_TEMP/lamzu-release-notes.md"
 
@@ -70,10 +76,11 @@ jobs:
 
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$releases"
           if jq -e --arg tag "$tag" 'any(.[][]; .tag_name == $tag and .draft == false)' "$releases" > /dev/null; then
-            if [[ "$tagged_commit" != "$commit" ]] || ! jq -e --arg tag "$tag" --arg asset "$asset_name" '
-              any(.[][]; .tag_name == $tag and .draft == false and any(.assets[]?; .name == $asset))
-            ' "$releases" > /dev/null; then
-              printf 'The published release %s lacks the expected tag or archive.\n' "$tag" >&2
+            if [[ "$tagged_commit" != "$commit" ]] || ! jq -e --arg tag "$tag" '
+              any(.[][]; .tag_name == $tag and .draft == false
+                and (($ARGS.positional - [.assets[]? | select(.state == "uploaded") | .name]) | length == 0))
+            ' --args "${asset_names[@]}" < "$releases" > /dev/null; then
+              printf 'The published release %s lacks the expected tag or Windows packages.\n' "$tag" >&2
               exit 1
             fi
             printf 'Release %s is already published.\n' "$tag"
@@ -84,10 +91,12 @@ jobs:
             exit 1
           fi
 
-          if [[ ! -s "$asset" ]]; then
-            printf 'The release archive is missing or empty: %s\n' "$asset" >&2
-            exit 1
-          fi
+          for asset in "${assets[@]}"; do
+            if [[ ! -s "$asset" ]]; then
+              printf 'A release package is missing or empty: %s\n' "$asset" >&2
+              exit 1
+            fi
+          done
 
           previous=$(jq -r '
             [.[][] | select(.draft == false and .published_at != null)]
@@ -115,7 +124,7 @@ jobs:
           if [[ -z "$tagged_commit" ]]; then
             git -c push.followTags=false push --force-with-lease="$tag_ref:" origin "$commit:$tag_ref"
           fi
-          gh release create --repo "$GITHUB_REPOSITORY" --verify-tag --title "LAMZU Battery Widget $tag" --notes-file "$notes" -- "$tag" "$asset"
+          gh release create --repo "$GITHUB_REPOSITORY" --verify-tag --title "LAMZU Battery Widget $tag" --notes-file "$notes" -- "$tag" "${assets[@]}"
 
       - name: Delete the published release branch
         shell: bash
