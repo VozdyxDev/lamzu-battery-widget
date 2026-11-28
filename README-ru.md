@@ -1,7 +1,7 @@
 # LAMZU Battery Widget
 
-<img src="docs/screenshots/receiver-connected.png" width="288" alt="LAMZU Battery Widget показывает заряд мыши при подключении по 2,4 ГГц">
 <img src="lamzu-widget/assets/lbw.png" width="146" alt="Логотип LBW">
+<img src="docs/screenshots/receiver-connected.png" width="288" alt="LAMZU Battery Widget показывает заряд мыши при подключении по 2,4 ГГц">
 
 [English version](README.md)
 
@@ -111,3 +111,11 @@ cargo test --workspace
 ```
 
 Формат запроса сверили с `HIDUsb.dll`, которая входит в фирменную утилиту LAMZU. Для чтения заряда библиотека использует 17-байтный HID-отчёт `0x08` и команду `0x04`. Если нужно установить или восстановить сеанс с приёмником, библиотека отправляет команду инициализации `0x01` в рамках того же планового запроса. [Описание протокола](https://github.com/lavandiI/lamzu-battery#compx) · [Инициализация приёмника MAYA](https://github.com/z1k1z/maya-charge/blob/main/src/main.rs#L154-L169) · [Документация Windows HID](https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/sending-hid-reports)
+
+## Товарные знаки и авторские права LAMZU
+
+Товарный знак и логотип LAMZU принадлежат Shenzhen Lamzu Electronic Technology Co.,Ltd. [Регистрация товарного знака](https://ised-isde.canada.ca/cipo/trademark-search/2257180)
+
+Авторские права на официальное программное обеспечение и материалы LAMZU сохраняются за соответствующими правообладателями.
+
+LAMZU Battery Widget — неофициальный проект, который разрабатывается и поддерживается независимо от Shenzhen Lamzu Electronic Technology Co.,Ltd.

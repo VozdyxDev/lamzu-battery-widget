@@ -1,7 +1,7 @@
 # LAMZU Battery Widget
 
-<img src="docs/screenshots/en/receiver-connected.png" width="288" alt="LAMZU Battery Widget showing battery level over a 2.4 GHz connection">
 <img src="lamzu-widget/assets/lbw.png" width="146" alt="LBW logo">
+<img src="docs/screenshots/en/receiver-connected.png" width="288" alt="LAMZU Battery Widget showing battery level over a 2.4 GHz connection">
 
 [Русская версия](README-ru.md)
 
@@ -111,3 +111,11 @@ cargo test --workspace
 ```
 
 The query format was checked against `HIDUsb.dll`, which is bundled with the LAMZU utility. The library reads the battery with the 17-byte HID report `0x08` and command `0x04`. When it needs to start or restore a receiver session, it sends initialization command `0x01` as part of the same scheduled query. [Protocol description](https://github.com/lavandiI/lamzu-battery#compx) · [MAYA receiver initialization](https://github.com/z1k1z/maya-charge/blob/main/src/main.rs#L154-L169) · [Windows HID documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/sending-hid-reports)
+
+## LAMZU Trademarks and Copyright
+
+The LAMZU trademark and logo belong to Shenzhen Lamzu Electronic Technology Co.,Ltd. [Trademark registration](https://ised-isde.canada.ca/cipo/trademark-search/2257180)
+
+Copyright in the official LAMZU software and materials remains with the respective rights holders.
+
+LAMZU Battery Widget is an unofficial project developed and maintained independently of Shenzhen Lamzu Electronic Technology Co.,Ltd.
