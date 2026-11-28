@@ -5,7 +5,7 @@
 
 [Русская версия](README-ru.md)
 
-A Windows 10 and 11 desktop widget for a LAMZU mouse. It shows the connection status, battery percentage, time since the last query, and time until the next query. Both timers show seconds for durations under a minute. The widget sits behind the desktop icons and lets mouse clicks pass through. Its default position is the upper-right corner of the primary monitor.
+A Windows 10 and 11 desktop widget for a LAMZU mouse. It shows the connection status, battery percentage, battery voltage, time since the last query, and time until the next query. Both timers show seconds for durations under a minute. The widget sits behind the desktop icons and lets mouse clicks pass through. Its default position is the upper-right corner of the primary monitor.
 
 ## AI Disclaimer
 
@@ -35,6 +35,8 @@ Left-click the LBW icon in the Windows notification area to hide or show the car
 The widget checks for updates on GitHub at startup and every 24 hours. After it successfully sends a Windows notification about a newer stable release, automatic checks pause until the next launch. Click the notification to see both versions and confirm the update. Choose **Check for updates** below the version in the tray menu to check manually and open the result directly. A manual check resets the 24-hour timer while automatic checks are still active. Select **Update** to download and verify the package for your installed or portable copy. The widget restarts after the update and keeps your settings.
 
 Use **Monitor** and **Position** in the same menu to move the card. The widget saves both settings in the Windows registry for your account. If the selected monitor disconnects, the card moves to the same corner of the primary monitor and returns when that monitor reconnects.
+
+In **2.4 GHz polling interval**, choose 2 hours, 1 hour, 30 minutes, 10 minutes, 1 minute, or 30 seconds. **Show battery voltage** is enabled by default. Turn it off for a shorter card. Both settings are saved for your Windows account.
 
 Run these commands in PowerShell from the extracted folder or the installation folder. Setup uses `%LOCALAPPDATA%\Programs\LAMZU Battery Widget` by default.
 
@@ -82,8 +84,8 @@ The LAMZU utility's `Config.ini` lists these models.
 - If both connections are present, the widget reads the battery over USB.
 - The widget converts voltage to a percentage using the MAYA `BatteryParam` table. If the HID report provides only a percentage, it uses the reported value.
 - Windows detects the USB receiver even when the mouse is off or asleep. A response from the mouse confirms the wireless link at the time of the query, and the widget shows how long ago that query occurred.
-- The widget queries the battery at startup and when the cable or receiver reconnects. It waits 30 seconds between wired queries or after a failed query. After a successful wireless query, it waits two hours.
-- The cache in `%LOCALAPPDATA%\LamzuMonitor` stores the last battery value and query time. The widget hides the battery value when the connection is lost. If the receiver remains plugged in, a change in the wireless link becomes apparent on the next query.
+- The widget queries the battery at startup and when the cable or receiver reconnects. It waits 30 seconds between wired queries or after a failed query. After a successful wireless query, it uses the selected interval, which defaults to two hours. Changing the interval recalculates the deadline from the last query.
+- The cache in `%LOCALAPPDATA%\LamzuMonitor` stores the last battery reading and query time. The widget hides the battery percentage and voltage when the connection is lost. If the receiver remains plugged in, a change in the wireless link becomes apparent on the next query.
 
 ## Rust Library
 
@@ -100,7 +102,7 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-In a GUI app, run battery queries on a background thread and use `next_sample_in()` to calculate the wait. The `status` example checks whether Windows sees a supported USB device. With `--sample`, it uses the same cache and query schedule as the widget.
+In a GUI app, run battery queries on a background thread and use `next_sample_in()` to calculate the wait. Call `set_receiver_interval()` to change the default two-hour interval for successful wireless queries. The `status` example checks whether Windows sees a supported USB device. With `--sample`, it uses the shared cache and the library's default interval.
 
 ```powershell
 cargo run -p lamzu-hid --example status

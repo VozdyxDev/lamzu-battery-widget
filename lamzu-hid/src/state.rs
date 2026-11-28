@@ -11,10 +11,9 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 
-use crate::{AttemptOutcome, BatteryAttempt, BatterySample, Transport};
+use crate::{AttemptOutcome, BatteryAttempt, BatterySample, ReceiverInterval, Transport};
 
-const RECEIVER_SAMPLE_INTERVAL_MS: u64 = 2 * 60 * 60 * 1_000;
-const SHORT_SAMPLE_INTERVAL_MS: u64 = 30 * 1_000;
+const SHORT_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
 const CACHE_LIMIT: u64 = 8_192;
 const VERSION: u8 = 1;
 const STATE_NAME: &str = "battery-state.json";
@@ -37,6 +36,7 @@ struct Snapshot {
 pub(crate) struct Store {
     path: PathBuf,
     snapshot: Option<Snapshot>,
+    receiver_interval: ReceiverInterval,
     _lock: File,
 }
 
@@ -55,6 +55,10 @@ impl Store {
 
     pub(crate) fn last_attempt(&self) -> Option<BatteryAttempt> {
         self.snapshot.and_then(|snapshot| snapshot.last_attempt)
+    }
+
+    pub(crate) fn set_receiver_interval(&mut self, interval: ReceiverInterval) {
+        self.receiver_interval = interval;
     }
 
     pub(crate) fn eligible_now(&self, force: bool) -> bool {
@@ -91,6 +95,7 @@ impl Store {
         let mut store = Self {
             path,
             snapshot: None,
+            receiver_interval: ReceiverInterval::default(),
             _lock: lock,
         };
         let file = match File::open(&store.path) {
@@ -139,20 +144,20 @@ impl Store {
         let (previous, interval) = match snapshot.gate {
             Gate::Pending => return None,
             _ if force => return Some(Duration::ZERO),
-            Gate::RecoverySince(previous) => (previous, SHORT_SAMPLE_INTERVAL_MS),
+            Gate::RecoverySince(previous) => (previous, SHORT_SAMPLE_INTERVAL),
             Gate::CooldownSince(previous) => match snapshot.last_attempt {
                 Some(BatteryAttempt {
                     transport: Transport::Receiver,
                     outcome: AttemptOutcome::Sampled,
                     ..
-                }) => (previous, RECEIVER_SAMPLE_INTERVAL_MS),
-                _ => (previous, SHORT_SAMPLE_INTERVAL_MS),
+                }) => (previous, self.receiver_interval.duration()),
+                _ => (previous, SHORT_SAMPLE_INTERVAL),
             },
         };
         // Uptime ignores edits to the calendar. If a reboot went undetected,
         // eligibility still requires at least the full interval of new uptime.
-        let elapsed = now.saturating_sub(previous);
-        Some(Duration::from_millis(interval.saturating_sub(elapsed)))
+        let elapsed = Duration::from_millis(now.saturating_sub(previous));
+        Some(interval.saturating_sub(elapsed))
     }
 
     fn begin_at(&mut self, now: u64, force: bool) -> io::Result<()> {
@@ -250,6 +255,9 @@ mod tests {
     use crate::device::{Device, Discovery, Reading};
     use crate::{ChargeState, Connection, LinkCheck, Monitor};
 
+    const DEFAULT_RECEIVER_INTERVAL_MS: u64 = 2 * 60 * 60 * 1_000;
+    const SHORT_SAMPLE_INTERVAL_MS: u64 = SHORT_SAMPLE_INTERVAL.as_millis() as u64;
+
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
@@ -345,7 +353,7 @@ mod tests {
         store.finish_at(1_500, successful, Some(sample)).unwrap();
         drop(store);
 
-        let due = RECEIVER_SAMPLE_INTERVAL_MS + 1_500;
+        let due = DEFAULT_RECEIVER_INTERVAL_MS + 1_500;
         let mut restarted = Store::open_at(&root.0, 2_000).unwrap();
         assert_eq!(restarted.battery().unwrap().percent, 80);
         assert!(!restarted.eligible_at(1_500 + SHORT_SAMPLE_INTERVAL_MS, false));
@@ -360,7 +368,9 @@ mod tests {
         // An earlier wall time has no effect on the cooldown.
         let failed = attempt(AttemptOutcome::NoResponse, 9_000);
         restarted.finish_at(due, failed, None).unwrap();
+        restarted.set_receiver_interval(ReceiverInterval::TenMinutes);
         assert!(!restarted.eligible_at(due + SHORT_SAMPLE_INTERVAL_MS - 1, false));
+        assert!(restarted.eligible_at(due + SHORT_SAMPLE_INTERVAL_MS, false));
         drop(restarted);
         let mut restarted = Store::open_at(&root.0, due + SHORT_SAMPLE_INTERVAL_MS).unwrap();
         assert_eq!(restarted.battery().unwrap().measured_at, sample.measured_at);
@@ -375,8 +385,66 @@ mod tests {
         restarted
             .finish_at(retry_done, attempt(AttemptOutcome::Failed, 9_030), None)
             .unwrap();
+        restarted.set_receiver_interval(ReceiverInterval::OneMinute);
         assert!(!restarted.eligible_at(retry_done + SHORT_SAMPLE_INTERVAL_MS - 1, false));
         assert!(restarted.eligible_at(retry_done + SHORT_SAMPLE_INTERVAL_MS, false));
+    }
+
+    #[test]
+    fn each_receiver_interval_uses_the_same_completion_anchor() {
+        let root = TestDirectory::new();
+        let mut store = Store::open_at(&root.0, 1_000).unwrap();
+        store.begin_at(1_000, false).unwrap();
+        let completed = 1_500;
+        store
+            .finish_at(completed, attempt(AttemptOutcome::Sampled, 10_000), None)
+            .unwrap();
+
+        for (interval, seconds) in ReceiverInterval::ALL
+            .into_iter()
+            .zip([7_200, 3_600, 1_800, 600, 60, 30])
+        {
+            let duration = Duration::from_secs(seconds);
+            assert_eq!(interval.duration(), duration);
+            store.set_receiver_interval(interval);
+            let due = completed + seconds * 1_000;
+            assert_eq!(store.remaining_at(completed, false), Some(duration));
+            assert_eq!(
+                store.remaining_at(due - 1, false),
+                Some(Duration::from_millis(1))
+            );
+            assert_eq!(store.remaining_at(due, false), Some(Duration::ZERO));
+        }
+    }
+
+    #[test]
+    fn interval_changes_reschedule_existing_cache_without_writing_it() {
+        let root = TestDirectory::new();
+        let mut store = Store::open_at(&root.0, 1_000).unwrap();
+        store.begin_at(1_000, false).unwrap();
+        let completed = 1_500;
+        let sampled = attempt(AttemptOutcome::Sampled, 10_000);
+        store.finish_at(completed, sampled, None).unwrap();
+        let state_path = store.path.clone();
+        let original_cache = fs::read(&state_path).unwrap();
+        drop(store);
+
+        let now = completed + 45 * 60 * 1_000;
+        let mut monitor = Monitor::from_store(Store::open_at(&root.0, now).unwrap());
+        assert_eq!(monitor.snapshot().last_attempt, Some(sampled));
+        assert_eq!(
+            monitor.store.remaining_at(now, false),
+            Some(Duration::from_secs(75 * 60))
+        );
+
+        monitor.set_receiver_interval(ReceiverInterval::ThirtyMinutes);
+        assert_eq!(monitor.store.remaining_at(now, false), Some(Duration::ZERO));
+        monitor.set_receiver_interval(ReceiverInterval::OneHour);
+        assert_eq!(
+            monitor.store.remaining_at(now, false),
+            Some(Duration::from_secs(15 * 60))
+        );
+        assert_eq!(fs::read(state_path).unwrap(), original_cache);
     }
 
     #[test]
@@ -392,6 +460,7 @@ mod tests {
         drop(store);
 
         let mut restarted = Store::open_at(&root.0, 2_000).unwrap();
+        restarted.set_receiver_interval(ReceiverInterval::OneHour);
         assert_eq!(restarted.last_attempt(), Some(successful));
         assert_eq!(
             restarted.remaining_at(1_500 + 29_999, false),
@@ -406,12 +475,16 @@ mod tests {
         let root = TestDirectory::new();
         let mut store = Store::open_at(&root.0, 1_000).unwrap();
         store.begin_at(1_000, false).unwrap();
+        store.set_receiver_interval(ReceiverInterval::OneHour);
+        assert_eq!(store.remaining_at(u64::MAX, false), None);
+        assert_eq!(store.remaining_at(u64::MAX, true), None);
         assert!(store.begin_at(1_001, true).is_err());
         assert!(Store::open_at(&root.0, 1_001).is_err());
         drop(store);
 
         let recovery = 2_000 + SHORT_SAMPLE_INTERVAL_MS;
         let mut store = Store::open_at(&root.0, recovery).unwrap();
+        store.set_receiver_interval(ReceiverInterval::OneHour);
         assert!(!store.eligible_at(recovery + SHORT_SAMPLE_INTERVAL_MS - 1, false));
         assert!(store.eligible_at(recovery + SHORT_SAMPLE_INTERVAL_MS, false));
         store.begin_at(recovery, true).unwrap();
@@ -442,8 +515,8 @@ mod tests {
         drop(store);
 
         let mut rebooted = Store::open_at(&root.0, 1_000).unwrap();
-        assert!(!rebooted.eligible_at(1_000 + RECEIVER_SAMPLE_INTERVAL_MS - 1, false));
-        assert!(rebooted.eligible_at(1_000 + RECEIVER_SAMPLE_INTERVAL_MS, false));
+        assert!(!rebooted.eligible_at(1_000 + DEFAULT_RECEIVER_INTERVAL_MS - 1, false));
+        assert!(rebooted.eligible_at(1_000 + DEFAULT_RECEIVER_INTERVAL_MS, false));
         rebooted.begin_at(1_000, true).unwrap();
         assert!(rebooted.begin_at(1_001, true).is_err());
     }

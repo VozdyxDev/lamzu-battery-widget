@@ -22,6 +22,40 @@ pub enum Transport {
     Receiver,
 }
 
+/// Time to wait after a successful battery query over the wireless receiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReceiverInterval {
+    #[default]
+    TwoHours,
+    OneHour,
+    ThirtyMinutes,
+    TenMinutes,
+    OneMinute,
+    ThirtySeconds,
+}
+
+impl ReceiverInterval {
+    pub const ALL: [Self; 6] = [
+        Self::TwoHours,
+        Self::OneHour,
+        Self::ThirtyMinutes,
+        Self::TenMinutes,
+        Self::OneMinute,
+        Self::ThirtySeconds,
+    ];
+
+    pub const fn duration(self) -> Duration {
+        Duration::from_secs(match self {
+            Self::TwoHours => 7_200,
+            Self::OneHour => 3_600,
+            Self::ThirtyMinutes => 1_800,
+            Self::TenMinutes => 600,
+            Self::OneMinute => 60,
+            Self::ThirtySeconds => 30,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Connection {
     Absent,
@@ -136,6 +170,12 @@ impl Monitor {
     /// Return the current view without touching the hardware.
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot
+    }
+
+    /// Set the interval after a successful wireless query without resetting the
+    /// cooldown. This call performs no I/O.
+    pub fn set_receiver_interval(&mut self, interval: ReceiverInterval) {
+        self.store.set_receiver_interval(interval);
     }
 
     /// Sample at application startup, or as soon as a supported device is present.

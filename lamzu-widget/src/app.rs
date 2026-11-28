@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use lamzu_hid::{Connection, Monitor, Snapshot, detect_connection};
+use lamzu_hid::{Connection, Monitor, ReceiverInterval, Snapshot, detect_connection};
 use windows_sys::Win32::{
     Devices::HumanInterfaceDevice::GUID_DEVINTERFACE_HID,
     Foundation::{
@@ -232,6 +232,8 @@ fn run(demo: bool, language_changed: bool) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     let language = registry::language();
+    let receiver_interval = registry::receiver_interval();
+    let show_battery_voltage = registry::show_battery_voltage();
     let state = WindowState {
         taskbar_created: unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
         app: RefCell::new(App {
@@ -241,15 +243,13 @@ fn run(demo: bool, language_changed: bool) -> io::Result<()> {
             visible: true,
             selected_monitor: registry::monitor(),
             corner: registry::corner(),
+            receiver_interval,
+            show_battery_voltage,
             monitors: display::monitors(),
             tray: None,
             menu_open: false,
             updates: Updates::default(),
-            contents: if demo {
-                Contents::demo(language)
-            } else {
-                Contents::waiting(language)
-            },
+            contents: initial_contents(demo, language, show_battery_voltage),
             latest: None,
             layer: None,
             layer_error: false,
@@ -289,7 +289,7 @@ fn run(demo: bool, language_changed: bool) -> io::Result<()> {
         None
     } else {
         let notifications = DeviceNotifications::register(hwnd);
-        state.app.borrow_mut().poller = Some(Poller::spawn(hwnd)?);
+        state.app.borrow_mut().poller = Some(Poller::spawn(hwnd, receiver_interval)?);
         notifications
     };
     unsafe { SetTimer(hwnd, DISPLAY_TIMER, 1_000, None) };
@@ -354,6 +354,16 @@ struct WindowState {
     app: RefCell<App>,
 }
 
+fn initial_contents(demo: bool, language: Language, show_battery_voltage: bool) -> Contents {
+    let mut contents = if demo {
+        Contents::demo(language)
+    } else {
+        Contents::waiting(language)
+    };
+    contents.set_voltage_visible(show_battery_voltage);
+    contents
+}
+
 struct App {
     module: HMODULE,
     demo: bool,
@@ -361,6 +371,8 @@ struct App {
     visible: bool,
     selected_monitor: Option<String>,
     corner: Corner,
+    receiver_interval: ReceiverInterval,
+    show_battery_voltage: bool,
     monitors: Vec<display::Monitor>,
     tray: Option<tray::Tray>,
     menu_open: bool,
@@ -457,12 +469,13 @@ impl App {
 
     fn update_display(&mut self) {
         let contents = self.latest.as_ref().and_then(|result| {
-            let contents = Contents::from_poll(
+            let mut contents = Contents::from_poll(
                 &result.snapshot,
                 result.failed,
                 result.time_until_sample(),
                 self.language,
             );
+            contents.set_voltage_visible(self.show_battery_voltage);
             (contents != self.contents).then_some(contents)
         });
         let changed = contents.is_some();
@@ -482,18 +495,14 @@ impl App {
         if self.latest.is_some() {
             self.update_display();
         } else {
-            self.contents = if self.demo {
-                Contents::demo(language)
-            } else {
-                Contents::waiting(language)
-            };
+            self.contents = initial_contents(self.demo, language, self.show_battery_voltage);
             self.draw(true);
         }
     }
 }
 
 fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
-    let (language, monitor, corner, update_status) = {
+    let (language, monitor, corner, receiver_interval, show_battery_voltage, update_status) = {
         let Ok(mut app) = state.try_borrow_mut() else {
             return;
         };
@@ -505,6 +514,8 @@ fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
             app.language,
             app.selected_monitor.clone(),
             app.corner,
+            app.receiver_interval,
+            app.show_battery_voltage,
             app.updates.menu_label(app.language.text()),
         )
     };
@@ -525,6 +536,8 @@ fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
             autostart,
             selected_monitor: monitor.as_deref(),
             corner,
+            receiver_interval,
+            show_battery_voltage,
             update_status,
         },
     );
@@ -562,6 +575,27 @@ fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
                     app.relayout();
                 }
                 (result, text.corner_error)
+            }
+            Some(tray::Action::ReceiverInterval(interval)) => {
+                if interval == app.receiver_interval {
+                    return;
+                }
+                let result = registry::set_receiver_interval(interval);
+                if result.is_ok() {
+                    app.receiver_interval = interval;
+                    app.request(PollRequest::ReceiverInterval(interval));
+                }
+                (result, text.receiver_interval_error)
+            }
+            Some(tray::Action::ToggleBatteryVoltage) => {
+                let visible = !app.show_battery_voltage;
+                let result = registry::set_show_battery_voltage(visible);
+                if result.is_ok() {
+                    app.show_battery_voltage = visible;
+                    app.contents.set_voltage_visible(visible);
+                    app.draw(true);
+                }
+                (result, text.voltage_visibility_error)
             }
             Some(tray::Action::ToggleAutostart) => {
                 let Some(enabled) = autostart else {
@@ -801,6 +835,7 @@ unsafe fn removed_interface(lparam: LPARAM) -> Option<Vec<u16>> {
 enum PollRequest {
     Rescan,
     InterfaceRemoved(Vec<u16>),
+    ReceiverInterval(ReceiverInterval),
 }
 
 struct PollResult {
@@ -824,7 +859,7 @@ struct Poller {
 }
 
 impl Poller {
-    fn spawn(hwnd: HWND) -> io::Result<Self> {
+    fn spawn(hwnd: HWND, mut receiver_interval: ReceiverInterval) -> io::Result<Self> {
         let (requests, input) = mpsc::channel();
         let (output, updates) = mpsc::channel();
         let stopping = Arc::new(AtomicBool::new(false));
@@ -835,7 +870,7 @@ impl Poller {
             .spawn(move || {
                 let mut monitor = None;
                 while !worker_stopping.load(Ordering::Relaxed) {
-                    let polled = poll(&mut monitor);
+                    let polled = poll(&mut monitor, receiver_interval);
                     let delay = match polled.time_until_sample() {
                         Some(delay) if !polled.failed || !delay.is_zero() => {
                             delay.min(RESCAN_INTERVAL)
@@ -851,10 +886,19 @@ impl Poller {
                     match input.recv_timeout(delay) {
                         Ok(first) => {
                             for request in std::iter::once(first).chain(input.try_iter()) {
-                                if let (Some(monitor), PollRequest::InterfaceRemoved(path)) =
-                                    (&mut monitor, request)
-                                {
-                                    monitor.interface_removed(&path);
+                                match request {
+                                    PollRequest::Rescan => {}
+                                    PollRequest::InterfaceRemoved(path) => {
+                                        if let Some(monitor) = &mut monitor {
+                                            monitor.interface_removed(&path);
+                                        }
+                                    }
+                                    PollRequest::ReceiverInterval(interval) => {
+                                        receiver_interval = interval;
+                                        if let Some(monitor) = &mut monitor {
+                                            monitor.set_receiver_interval(interval);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -888,10 +932,13 @@ impl Drop for Poller {
     }
 }
 
-fn poll(monitor: &mut Option<Monitor>) -> PollResult {
+fn poll(monitor: &mut Option<Monitor>, receiver_interval: ReceiverInterval) -> PollResult {
     let result = match monitor {
         Some(monitor) => monitor.refresh(),
-        None => Monitor::open().and_then(|opened| monitor.insert(opened).refresh_at_startup()),
+        None => Monitor::open().and_then(|mut opened| {
+            opened.set_receiver_interval(receiver_interval);
+            monitor.insert(opened).refresh_at_startup()
+        }),
     };
     let next_sample_at = monitor
         .as_ref()

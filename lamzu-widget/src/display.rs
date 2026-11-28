@@ -172,9 +172,9 @@ pub struct CardLayout {
 }
 
 impl CardLayout {
-    pub fn new(work: RECT, corner: Corner, dpi: u32) -> Self {
+    pub fn new(work: RECT, corner: Corner, dpi: u32, logical_height: i32) -> Self {
         let width = card::scale(card::WIDTH, dpi);
-        let height = card::scale(card::HEIGHT, dpi);
+        let height = card::scale(logical_height, dpi);
         let margin = card::scale(24, dpi);
         let right = matches!(corner, Corner::TopRight | Corner::BottomRight);
         let bottom = matches!(corner, Corner::BottomRight | Corner::BottomLeft);
@@ -239,9 +239,16 @@ mod tests {
             (Corner::BottomRight, -312, -218),
             (Corner::BottomLeft, -1576, -218),
         ] {
-            let layout = CardLayout::new(work, corner, 96);
-            assert_eq!((layout.position.x, layout.position.y), (x, y));
-            assert_eq!((layout.width, layout.height), (288, 146));
+            for height in [146, 166] {
+                let layout = CardLayout::new(work, corner, 96, height);
+                let expected_y = if matches!(corner, Corner::BottomLeft | Corner::BottomRight) {
+                    y - (height - 146)
+                } else {
+                    y
+                };
+                assert_eq!((layout.position.x, layout.position.y), (x, expected_y));
+                assert_eq!((layout.width, layout.height), (288, height));
+            }
             assert_eq!(Corner::parse(corner.code()), Some(corner));
         }
     }
@@ -257,9 +264,10 @@ mod tests {
             },
             Corner::BottomRight,
             144,
+            166,
         );
-        assert_eq!((layout.width, layout.height), (432, 219));
-        assert_eq!((layout.position.x, layout.position.y), (3372, 785));
+        assert_eq!((layout.width, layout.height), (432, 249));
+        assert_eq!((layout.position.x, layout.position.y), (3372, 755));
     }
 
     #[test]
@@ -273,6 +281,7 @@ mod tests {
             },
             Corner::TopLeft,
             96,
+            146,
         );
         assert_eq!((layout.position.x, layout.position.y), (12, 24));
     }

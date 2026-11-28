@@ -7,6 +7,7 @@ use std::{
     ptr::null_mut,
 };
 
+use lamzu_hid::ReceiverInterval;
 use windows_sys::{
     Win32::{
         Foundation::{
@@ -28,6 +29,8 @@ const SETTINGS_KEY: PCWSTR = w!("Software\\LAMZU Battery Widget");
 const LANGUAGE_VALUE: PCWSTR = w!("Language");
 const MONITOR_VALUE: PCWSTR = w!("Monitor");
 const CORNER_VALUE: PCWSTR = w!("Corner");
+const RECEIVER_INTERVAL_VALUE: PCWSTR = w!("ReceiverIntervalSeconds");
+const SHOW_BATTERY_VOLTAGE_VALUE: PCWSTR = w!("ShowBatteryVoltage");
 const PRIMARY_MONITOR: &str = "primary";
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const RUN_VALUE: PCWSTR = w!("LAMZU Battery Widget");
@@ -66,6 +69,33 @@ pub fn corner() -> Corner {
 
 pub fn set_corner(corner: Corner) -> io::Result<()> {
     set_setting(CORNER_VALUE, corner.code())
+}
+
+pub fn receiver_interval() -> ReceiverInterval {
+    read_setting(RECEIVER_INTERVAL_VALUE)
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|seconds| {
+            ReceiverInterval::ALL
+                .iter()
+                .copied()
+                .find(|interval| interval.duration().as_secs() == seconds)
+        })
+        .unwrap_or_default()
+}
+
+pub fn set_receiver_interval(value: ReceiverInterval) -> io::Result<()> {
+    set_setting(
+        RECEIVER_INTERVAL_VALUE,
+        &value.duration().as_secs().to_string(),
+    )
+}
+
+pub fn show_battery_voltage() -> bool {
+    read_setting(SHOW_BATTERY_VOLTAGE_VALUE).as_deref() != Some("0")
+}
+
+pub fn set_show_battery_voltage(enabled: bool) -> io::Result<()> {
+    set_setting(SHOW_BATTERY_VOLTAGE_VALUE, if enabled { "1" } else { "0" })
 }
 
 pub fn autostart_enabled() -> io::Result<bool> {

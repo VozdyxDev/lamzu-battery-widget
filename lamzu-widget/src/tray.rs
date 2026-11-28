@@ -1,5 +1,6 @@
 use std::{mem, ptr::null_mut};
 
+use lamzu_hid::ReceiverInterval;
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, POINT, RECT},
     System::LibraryLoader::GetModuleHandleW,
@@ -35,7 +36,11 @@ const TOP_RIGHT: u32 = 5;
 const TOP_LEFT: u32 = 6;
 const BOTTOM_RIGHT: u32 = 7;
 const BOTTOM_LEFT: u32 = 8;
-const CHECK_UPDATES: u32 = BOTTOM_LEFT + 1;
+const FIRST_RECEIVER_INTERVAL: u32 = BOTTOM_LEFT + 1;
+const LAST_RECEIVER_INTERVAL: u32 =
+    FIRST_RECEIVER_INTERVAL + ReceiverInterval::ALL.len() as u32 - 1;
+const BATTERY_VOLTAGE: u32 = LAST_RECEIVER_INTERVAL + 1;
+const CHECK_UPDATES: u32 = BATTERY_VOLTAGE + 1;
 const MAIN_MONITOR: u32 = CHECK_UPDATES + 1;
 const FIRST_MONITOR: u32 = MAIN_MONITOR + 1;
 
@@ -63,6 +68,8 @@ pub enum Action {
     Language(Language),
     Monitor(Option<String>),
     Corner(Corner),
+    ReceiverInterval(ReceiverInterval),
+    ToggleBatteryVoltage,
     ToggleAutostart,
     CheckUpdates,
     Close,
@@ -73,6 +80,8 @@ pub struct MenuSettings<'a> {
     pub autostart: Option<bool>,
     pub selected_monitor: Option<&'a str>,
     pub corner: Corner,
+    pub receiver_interval: ReceiverInterval,
+    pub show_battery_voltage: bool,
     pub update_status: Option<&'static str>,
 }
 
@@ -198,6 +207,8 @@ pub fn popup(hwnd: HWND, monitors: &[Monitor], settings: MenuSettings<'_>) -> Op
         autostart,
         selected_monitor,
         corner,
+        receiver_interval,
+        show_battery_voltage,
         update_status,
     } = settings;
     let menu = PopupMenu::new()?;
@@ -272,6 +283,32 @@ pub fn popup(hwnd: HWND, monitors: &[Monitor], settings: MenuSettings<'_>) -> Op
     corners.radio(TOP_RIGHT, BOTTOM_LEFT, selected_corner)?;
     menu.submenu(corners, text.tray_corner)?;
 
+    let intervals = PopupMenu::new()?;
+    for (index, label) in text.tray_receiver_intervals.into_iter().enumerate() {
+        let command = FIRST_RECEIVER_INTERVAL + index as u32;
+        intervals.item(command as usize, MF_STRING, label)?;
+    }
+    let selected_interval = ReceiverInterval::ALL
+        .iter()
+        .position(|&interval| interval == receiver_interval)? as u32;
+    intervals.radio(
+        FIRST_RECEIVER_INTERVAL,
+        LAST_RECEIVER_INTERVAL,
+        FIRST_RECEIVER_INTERVAL + selected_interval,
+    )?;
+    menu.submenu(intervals, text.tray_receiver_interval)?;
+
+    let voltage_flags = if show_battery_voltage {
+        MF_CHECKED
+    } else {
+        MF_UNCHECKED
+    };
+    menu.item(
+        BATTERY_VOLTAGE as usize,
+        MF_STRING | voltage_flags,
+        text.tray_show_voltage,
+    )?;
+
     let autostart_flags = match autostart {
         Some(true) => MF_CHECKED,
         Some(false) => MF_UNCHECKED,
@@ -316,6 +353,11 @@ pub fn popup(hwnd: HWND, monitors: &[Monitor], settings: MenuSettings<'_>) -> Op
         TOP_LEFT => Some(Action::Corner(Corner::TopLeft)),
         BOTTOM_RIGHT => Some(Action::Corner(Corner::BottomRight)),
         BOTTOM_LEFT => Some(Action::Corner(Corner::BottomLeft)),
+        FIRST_RECEIVER_INTERVAL..=LAST_RECEIVER_INTERVAL => {
+            let index = (command - FIRST_RECEIVER_INTERVAL) as usize;
+            Some(Action::ReceiverInterval(ReceiverInterval::ALL[index]))
+        }
+        BATTERY_VOLTAGE => Some(Action::ToggleBatteryVoltage),
         CHECK_UPDATES => Some(Action::CheckUpdates),
         AUTOSTART => Some(Action::ToggleAutostart),
         CLOSE => Some(Action::Close),

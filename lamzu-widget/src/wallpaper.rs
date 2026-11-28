@@ -245,7 +245,7 @@ impl Layer {
             mut position,
             width,
             height,
-        } = CardLayout::new(monitor.work_area()?, corner, dpi);
+        } = CardLayout::new(monitor.work_area()?, corner, dpi, data.height());
         // A secondary display's scale can change while the tray window stays on the primary.
         let mut current = RECT::default();
         if !changed

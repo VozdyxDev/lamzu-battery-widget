@@ -16,7 +16,8 @@ use windows_sys::Win32::{
 use crate::{app::wide, locale::Language};
 
 pub const WIDTH: i32 = 288;
-pub const HEIGHT: i32 = 146;
+const BASE_HEIGHT: i32 = 146;
+const DETAIL_ROW_HEIGHT: i32 = 20;
 
 const SURFACE: COLORREF = rgb(22, 29, 39);
 const OUTLINE: COLORREF = rgb(65, 80, 98);
@@ -45,6 +46,8 @@ pub struct Contents {
     status_color: COLORREF,
     percent: Option<u8>,
     charge_state: Option<ChargeState>,
+    millivolts: Option<u16>,
+    voltage_visible: bool,
     no_battery: &'static str,
     last_check: String,
     next_check: String,
@@ -59,6 +62,8 @@ impl Contents {
             status_color: MUTED,
             percent: None,
             charge_state: None,
+            millivolts: None,
+            voltage_visible: true,
             no_battery: text.first_query,
             last_check: check_line(language, text.last_query, None),
             next_check: next_check_line(language, None),
@@ -73,6 +78,8 @@ impl Contents {
             status_color: GREEN,
             percent: Some(78),
             charge_state: Some(ChargeState::Charging),
+            millivolts: Some(4_012),
+            voltage_visible: true,
             no_battery: "",
             last_check: check_line(language, text.last_query, Some(Duration::from_secs(13))),
             next_check: next_check_line(language, Some(Duration::from_secs(17))),
@@ -125,6 +132,10 @@ impl Contents {
             status_color,
             percent: visible_battery.map(|sample| sample.percent),
             charge_state: visible_battery.map(|sample| sample.charge_state),
+            millivolts: visible_battery
+                .map(|sample| sample.millivolts)
+                .filter(|&value| value != 0),
+            voltage_visible: true,
             no_battery: if visible_battery.is_some() {
                 ""
             } else if failed {
@@ -136,6 +147,39 @@ impl Contents {
             next_check: next_check_line(language, until_next),
         }
     }
+
+    pub fn set_voltage_visible(&mut self, visible: bool) {
+        self.voltage_visible = visible;
+    }
+
+    pub fn height(&self) -> i32 {
+        BASE_HEIGHT + self.voltage_row_height()
+    }
+
+    fn voltage_row_height(&self) -> i32 {
+        if self.voltage_visible {
+            DETAIL_ROW_HEIGHT
+        } else {
+            0
+        }
+    }
+}
+
+fn voltage_line(language: Language, millivolts: Option<u16>) -> String {
+    let text = language.text();
+    let Some(millivolts) = millivolts else {
+        return format!("{} · —", text.voltage);
+    };
+    let separator = match language {
+        Language::English => '.',
+        Language::Russian => ',',
+    };
+    let units = millivolts / 1_000;
+    let fraction = millivolts % 1_000;
+    format!(
+        "{} · {units}{separator}{fraction:03} {}",
+        text.voltage, text.volts
+    )
 }
 
 fn next_check_line(language: Language, remaining: Option<Duration>) -> String {
@@ -256,20 +300,17 @@ pub fn paint(data: &Contents, width: i32, height: i32, dpi: u32) -> io::Result<C
             MUTED,
         );
     }
-    canvas.text(
-        &data.last_check,
-        row(16, 94, 272, 114, dpi),
-        s(12),
-        FW_NORMAL,
-        MUTED,
-    );
-    canvas.text(
-        &data.next_check,
-        row(16, 114, 272, 134, dpi),
-        s(12),
-        FW_NORMAL,
-        MUTED,
-    );
+    let mut details_top = 94;
+    if data.voltage_visible {
+        canvas.detail_line(
+            &voltage_line(data.language, data.millivolts),
+            details_top,
+            dpi,
+        );
+        details_top += DETAIL_ROW_HEIGHT;
+    }
+    canvas.detail_line(&data.last_check, details_top, dpi);
+    canvas.detail_line(&data.next_check, details_top + DETAIL_ROW_HEIGHT, dpi);
     canvas.finalize_pixels();
     if !charging {
         let (left, top, diameter) = STATUS_DOT;
@@ -397,6 +438,16 @@ impl Canvas {
         }
     }
 
+    fn detail_line(&self, value: &str, top: i32, dpi: u32) {
+        self.text(
+            value,
+            row(16, top, 272, top + DETAIL_ROW_HEIGHT, dpi),
+            scale(12, dpi),
+            FW_NORMAL,
+            MUTED,
+        );
+    }
+
     fn finalize_pixels(&mut self) {
         unsafe { GdiFlush() };
         for pixel in
@@ -502,7 +553,8 @@ mod tests {
 
     #[test]
     fn status_dot_has_symmetric_antialiased_edges() {
-        let canvas = paint(&Contents::waiting(Language::Russian), WIDTH, HEIGHT, 96).unwrap();
+        let contents = Contents::waiting(Language::Russian);
+        let canvas = paint(&contents, WIDTH, contents.height(), 96).unwrap();
         let (left, top, diameter) = STATUS_DOT;
         let pixel = |x, y| canvas.pixels()[((top + y) * WIDTH + left + x) as usize];
         let background = pixel(0, 0);
@@ -544,7 +596,7 @@ mod tests {
             Language::Russian,
         );
         let width = WIDTH * 2;
-        let canvas = paint(&card, width, HEIGHT * 2, 192).unwrap();
+        let canvas = paint(&card, width, card.height() * 2, 192).unwrap();
         let pixel = |x, y| canvas.pixels()[(y * 2 * width + x * 2) as usize];
         assert_eq!(pixel(270, 74), 0xff68dea5);
         for y in 69..79 {
@@ -552,6 +604,35 @@ mod tests {
                 assert_eq!(pixel(x, y), 0xff161d27);
             }
         }
+    }
+
+    #[test]
+    fn voltage_uses_exact_millivolts_and_the_local_decimal_separator() {
+        assert_eq!(
+            voltage_line(Language::English, Some(4_168)),
+            "Voltage · 4.168 V"
+        );
+        assert_eq!(
+            voltage_line(Language::Russian, Some(4_168)),
+            "Напряжение · 4,168 В"
+        );
+        assert_eq!(
+            voltage_line(Language::English, Some(4_002)),
+            "Voltage · 4.002 V"
+        );
+        assert_eq!(voltage_line(Language::Russian, None), "Напряжение · —");
+    }
+
+    #[test]
+    fn voltage_visibility_changes_the_height_without_discarding_the_reading() {
+        let mut card = Contents::demo(Language::English);
+        assert_eq!(card.height(), 166);
+        assert_eq!(card.millivolts, Some(4_012));
+        card.set_voltage_visible(false);
+        assert_eq!(card.height(), 146);
+        assert_eq!(card.millivolts, Some(4_012));
+        card.set_voltage_visible(true);
+        assert_eq!(card.height(), 166);
     }
 
     #[test]
@@ -651,6 +732,7 @@ mod tests {
         assert_eq!(card.next_check, "До следующего запроса · 30 сек");
         assert_eq!(card.percent, None);
         assert_eq!(card.charge_state, None);
+        assert_eq!(card.millivolts, None);
     }
 
     #[test]
@@ -670,6 +752,18 @@ mod tests {
         let visible = Contents::from_poll_at(&snapshot, false, None, time, Language::Russian);
         assert_eq!(visible.percent, Some(73));
         assert_eq!(visible.charge_state, Some(ChargeState::Charging));
+        assert_eq!(visible.millivolts, Some(3_960));
+
+        let missing_voltage = Snapshot {
+            battery: snapshot.battery.map(|sample| BatterySample {
+                millivolts: 0,
+                ..sample
+            }),
+            ..snapshot
+        };
+        let card = Contents::from_poll_at(&missing_voltage, false, None, time, Language::Russian);
+        assert_eq!(card.percent, Some(73));
+        assert_eq!(card.millivolts, None);
 
         let disconnected = Snapshot {
             connection: Connection::Absent,
@@ -678,6 +772,7 @@ mod tests {
         let card = Contents::from_poll_at(&disconnected, false, None, time, Language::Russian);
         assert_eq!(card.percent, None);
         assert_eq!(card.charge_state, None);
+        assert_eq!(card.millivolts, None);
 
         let receiver = Snapshot {
             connection: Connection::Receiver,
@@ -687,5 +782,6 @@ mod tests {
         let card = Contents::from_poll_at(&receiver, false, None, time, Language::Russian);
         assert_eq!(card.percent, None);
         assert_eq!(card.charge_state, None);
+        assert_eq!(card.millivolts, None);
     }
 }
