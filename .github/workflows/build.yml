@@ -35,6 +35,12 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update --target x86_64-pc-windows-msvc
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2.9.3
+        with:
+          shared-key: x86_64-pc-windows-msvc
+          cmd-format: rustup run stable {0}
+
       - name: Resolve package version
         id: version
         env:
