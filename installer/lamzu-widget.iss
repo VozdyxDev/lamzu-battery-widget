@@ -63,6 +63,7 @@ Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgra
 
 [Code]
 const
+  CloseWindowMessage = $0010; { WM_CLOSE }
   StartupKey = '{#RunKey}';
   StartupValue = '{#AppName}';
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppId}_is1';
@@ -126,8 +127,6 @@ begin
 end;
 
 procedure CloseRunningWidget;
-const
-  CloseWindowMessage = $0010; { WM_CLOSE }
 var
   Attempt: Integer;
   Window: HWND;
