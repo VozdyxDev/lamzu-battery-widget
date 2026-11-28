@@ -5,6 +5,8 @@
 #define AppName "LAMZU Battery Widget"
 #define AppId "VozdyxDev.LamzuBatteryWidget"
 #define AppExe "lamzu-widget.exe"
+#define WidgetWindowClass "LamzuWallpaperMonitor"
+#define WidgetMutex "Local\LamzuWallpaperMonitor"
 #define RunKey "Software\Microsoft\Windows\CurrentVersion\Run"
 
 [Setup]
@@ -20,7 +22,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-AppMutex=Local\LamzuWallpaperMonitor
+AppMutex={#WidgetMutex}
 RestartApplications=no
 UsePreviousTasks=no
 SetupIconFile=..\lamzu-widget\assets\lbw.ico
@@ -38,6 +40,8 @@ en.RunAtLogon=Start LAMZU Battery Widget when I sign in to Windows
 ru.RunAtLogon=Запускать LAMZU Battery Widget при входе в Windows
 en.AutostartPathTooLong=The installation path is too long for Windows startup. Choose a shorter folder or clear the startup option.
 ru.AutostartPathTooLong=Путь установки слишком длинный для автозапуска Windows. Выберите более короткий путь или снимите флажок автозапуска.
+en.CloseWidgetFailed=Could not close LAMZU Battery Widget. Uninstallation was cancelled.
+ru.CloseWidgetFailed=Не удалось закрыть LAMZU Battery Widget. Удаление отменено.
 en.RemoveAutostartFailed=Could not remove LAMZU Battery Widget from Windows startup.
 ru.RemoveAutostartFailed=Не удалось убрать LAMZU Battery Widget из автозапуска Windows.
 
@@ -55,7 +59,7 @@ Root: HKCU; Subkey: "{#RunKey}"; ValueType: string; ValueName: "{#AppName}"; Val
 Root: HKCU; Subkey: "{#RunKey}"; ValueType: none; ValueName: "{#AppName}"; Flags: deletevalue dontcreatekey; Tasks: not autostart; Check: HasInstalledAutostart
 
 [Run]
-Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 const
@@ -121,8 +125,39 @@ begin
     Result := CustomMessage('AutostartPathTooLong');
 end;
 
+procedure CloseRunningWidget;
+const
+  CloseWindowMessage = $0010; { WM_CLOSE }
+var
+  Attempt: Integer;
+  Window: HWND;
+  CloseRequested: Boolean;
+begin
+  CloseRequested := False;
+  for Attempt := 1 to 100 do
+  begin
+    if not CheckForMutexes('{#WidgetMutex}') then
+      Exit;
+
+    if not CloseRequested then
+    begin
+      Window := FindWindowByClassName('{#WidgetWindowClass}');
+      if Window <> 0 then
+        CloseRequested := PostMessage(Window, CloseWindowMessage, 0, 0);
+    end;
+
+    Sleep(100);
+  end;
+
+  if CheckForMutexes('{#WidgetMutex}') then
+    RaiseException(CustomMessage('CloseWidgetFailed'));
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  if CurUninstallStep = usAppMutexCheck then
+    CloseRunningWidget;
+
   if (CurUninstallStep = usUninstall) and HasInstalledAutostart and
     not RegDeleteValue(HKCU, StartupKey, StartupValue) then
   begin
