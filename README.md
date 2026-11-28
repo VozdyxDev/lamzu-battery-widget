@@ -32,6 +32,8 @@ Connect the mouse by USB or through the LAMZU receiver. The widget appears behin
 
 Left-click the LBW icon in the Windows notification area to hide or show the card. The widget starts with the card visible each time. Right-click the icon to change the language, toggle startup at sign-in, or close the application. Windows may place the icon among the hidden icons.
 
+The widget checks for updates on GitHub at startup and every 24 hours. After it successfully sends a Windows notification about a newer stable release, automatic checks pause until the next launch. Click the notification to see both versions and confirm the update. Choose **Check for updates** below the version in the tray menu to check manually and open the result directly. A manual check resets the 24-hour timer while automatic checks are still active. Select **Update** to download and verify the package for your installed or portable copy. The widget restarts after the update and keeps your settings.
+
 Use **Monitor** and **Position** in the same menu to move the card. The widget saves both settings in the Windows registry for your account. If the selected monitor disconnects, the card moves to the same corner of the primary monitor and returns when that monitor reconnects.
 
 Run these commands in PowerShell from the extracted folder or the installation folder. Setup uses `%LOCALAPPDATA%\Programs\LAMZU Battery Widget` by default.

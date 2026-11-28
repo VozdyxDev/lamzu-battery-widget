@@ -5,6 +5,26 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=LAMZU_WIDGET_VERSION");
+    let version = match env::var("LAMZU_WIDGET_VERSION") {
+        Ok(version) => {
+            let mut components = version.split('.');
+            assert!(
+                components.clone().count() == 3
+                    && components.all(|component| {
+                        (component.len() == 1 || !component.starts_with('0'))
+                            && component.bytes().all(|byte| byte.is_ascii_digit())
+                            && component.parse::<u64>().is_ok()
+                    }),
+                "LAMZU_WIDGET_VERSION must be a numeric X.Y.Z version"
+            );
+            version
+        }
+        Err(env::VarError::NotPresent) => env!("CARGO_PKG_VERSION").into(),
+        Err(error) => panic!("Failed to read LAMZU_WIDGET_VERSION: {error}"),
+    };
+    println!("cargo:rustc-env=LAMZU_WIDGET_VERSION={version}");
+
     println!("cargo:rerun-if-changed=app.manifest");
     println!("cargo:rerun-if-changed=assets/lbw.rc");
     println!("cargo:rerun-if-changed=assets/lbw.ico");

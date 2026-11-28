@@ -6,6 +6,15 @@ on:
       - '**'
       - '!release/v**'
   workflow_call:
+    inputs:
+      release_branch:
+        description: Branch that determines the Windows release version
+        type: string
+        default: ''
+    outputs:
+      version:
+        description: Version embedded in the widget and installer
+        value: ${{ jobs.build.outputs.version }}
 
 permissions:
   contents: read
@@ -14,6 +23,8 @@ jobs:
   build:
     if: ${{ !github.event.deleted }}
     runs-on: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Check out source
@@ -23,6 +34,32 @@ jobs:
 
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update --target x86_64-pc-windows-msvc
+
+      - name: Resolve package version
+        id: version
+        env:
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+        run: |
+          if ($env:RELEASE_BRANCH) {
+            $component = '(?:0|[1-9][0-9]*)'
+            if ($env:RELEASE_BRANCH -cmatch "\Arelease/v($component\.$component\.$component)\z") {
+              $version = $Matches[1]
+            } else {
+              throw 'Release branches must be named release/vX.Y.Z.'
+            }
+            foreach ($part in $version.Split('.')) {
+              [uint64]$number = 0
+              if (-not [uint64]::TryParse($part, [ref]$number)) {
+                throw 'Each release version component must fit in an unsigned 64-bit integer.'
+              }
+            }
+          } else {
+            $metadata = cargo +stable metadata --format-version 1 --no-deps --locked | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $version = ($metadata.packages | Where-Object name -eq 'lamzu-widget').version
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "LAMZU_WIDGET_VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Test
         run: cargo +stable test --workspace --locked --target x86_64-pc-windows-msvc
@@ -39,14 +76,7 @@ jobs:
           -DestinationPath 'target/LAMZU-Battery-Widget-windows-x64.zip'
 
       - name: Build Inno Setup installer
-        run: |
-          if ($env:GITHUB_REF_NAME -cmatch '^release/v([0-9]+\.[0-9]+\.[0-9]+)$') {
-            $version = $Matches[1]
-          } else {
-            $metadata = cargo +stable metadata --format-version 1 --no-deps --locked | ConvertFrom-Json
-            $version = ($metadata.packages | Where-Object name -eq 'lamzu-widget').version
-          }
-          iscc /Qp "/DAppVersion=$version" installer/lamzu-widget.iss
+        run: iscc /Qp "/DAppVersion=$env:LAMZU_WIDGET_VERSION" installer/lamzu-widget.iss
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7

@@ -31,6 +31,9 @@ use crate::{
     display::{self, Corner},
     locale::{Language, Text},
     registry, tray,
+    update::Check,
+    update_apply::{self, ApplyOutcome},
+    update_ui::{self, CheckMode, Event as UpdateEvent, Updates},
     wallpaper::{self, Layer},
 };
 
@@ -52,6 +55,18 @@ pub fn wide(value: &str) -> Vec<u16> {
 pub fn main() {
     let args: Vec<_> = env::args_os().skip(1).collect();
     let text = registry::language().text();
+    if let Some((arg, rest)) = args.split_first()
+        && arg == update_apply::HELPER_ARG
+    {
+        match update_apply::run_helper(rest) {
+            Ok(ApplyOutcome::Restarted) => {}
+            Ok(ApplyOutcome::NeedsRestart) => {
+                message_box(text.update_needs_restart, MB_ICONINFORMATION);
+            }
+            Err(error) => report_error(text.update_apply_error, &error),
+        }
+        return;
+    }
     let Some(command) = Command::parse(&args) else {
         eprintln!("{}", text.usage);
         if !cfg!(debug_assertions) {
@@ -187,12 +202,20 @@ impl Drop for Singleton {
 }
 
 fn run(demo: bool, language_changed: bool) -> io::Result<()> {
+    if update_apply::in_progress() {
+        message_box(
+            registry::language().text().update_in_progress,
+            MB_ICONINFORMATION,
+        );
+        return Ok(());
+    }
     let Some(_singleton) = Singleton::open()? else {
         if language_changed {
             return post_to_controller(LANGUAGE_CHANGED);
         }
         return Ok(());
     };
+    update_apply::cleanup_finished();
     let module = unsafe { GetModuleHandleW(null_mut()) };
     if module.is_null() {
         return Err(io::Error::last_os_error());
@@ -221,6 +244,7 @@ fn run(demo: bool, language_changed: bool) -> io::Result<()> {
             monitors: display::monitors(),
             tray: None,
             menu_open: false,
+            updates: Updates::default(),
             contents: if demo {
                 Contents::demo(language)
             } else {
@@ -269,7 +293,11 @@ fn run(demo: bool, language_changed: bool) -> io::Result<()> {
         notifications
     };
     unsafe { SetTimer(hwnd, DISPLAY_TIMER, 1_000, None) };
-    state.app.borrow_mut().draw(true);
+    {
+        let mut app = state.app.borrow_mut();
+        app.draw(true);
+        app.check_updates_in_background(hwnd);
+    }
 
     let mut message = MSG::default();
     loop {
@@ -336,6 +364,7 @@ struct App {
     monitors: Vec<display::Monitor>,
     tray: Option<tray::Tray>,
     menu_open: bool,
+    updates: Updates,
     contents: Contents,
     latest: Option<PollResult>,
     layer: Option<Layer>,
@@ -344,6 +373,14 @@ struct App {
 }
 
 impl App {
+    fn check_updates_in_background(&mut self, hwnd: HWND) {
+        if !self.menu_open
+            && let Err(error) = self.updates.check(hwnd, CheckMode::Automatic)
+        {
+            eprintln!("{} {error}", self.language.text().update_check_error);
+        }
+    }
+
     fn relayout(&mut self) {
         self.monitors = display::monitors();
         self.draw(true);
@@ -456,7 +493,7 @@ impl App {
 }
 
 fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
-    let (language, monitor, corner) = {
+    let (language, monitor, corner, update_status) = {
         let Ok(mut app) = state.try_borrow_mut() else {
             return;
         };
@@ -464,7 +501,12 @@ fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
             return;
         }
         app.menu_open = true;
-        (app.language, app.selected_monitor.clone(), app.corner)
+        (
+            app.language,
+            app.selected_monitor.clone(),
+            app.corner,
+            app.updates.menu_label(app.language.text()),
+        )
     };
     let autostart = match registry::autostart_enabled() {
         Ok(enabled) => Some(enabled),
@@ -477,11 +519,14 @@ fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
     // The native menu pumps window messages, so leave App available while it is open.
     let selected = tray::popup(
         hwnd,
-        language,
-        autostart,
         &display::monitors(),
-        monitor.as_deref(),
-        corner,
+        tray::MenuSettings {
+            language,
+            autostart,
+            selected_monitor: monitor.as_deref(),
+            corner,
+            update_status,
+        },
     );
     let error = {
         let mut app = state.borrow_mut();
@@ -491,6 +536,10 @@ fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
         }
         let text = app.language.text();
         let (result, context) = match selected {
+            Some(tray::Action::CheckUpdates) => (
+                app.updates.check(hwnd, CheckMode::Manual),
+                text.update_check_error,
+            ),
             Some(tray::Action::Language(language)) => {
                 let result = registry::set_language(language);
                 if result.is_ok() {
@@ -535,6 +584,76 @@ fn open_tray_menu(hwnd: HWND, state: &RefCell<App>) {
     if let Some((context, error)) = error {
         show_error(context, &error);
     }
+}
+
+fn handle_update(hwnd: HWND, state: &RefCell<App>) {
+    let (event, language, demo) = {
+        let Ok(mut app) = state.try_borrow_mut() else {
+            return;
+        };
+        if app.menu_open {
+            return;
+        }
+        let Some(event) = app.updates.next_event() else {
+            return;
+        };
+        (event, app.language, app.demo)
+    };
+    let text = language.text();
+    match event {
+        UpdateEvent::Checked(CheckMode::Automatic, Ok(Check::Available(release))) => {
+            let message = format!(
+                "{} · {}\n{}",
+                text.update_new_version, release.version, text.update_open_notification,
+            );
+            let mut app = state.borrow_mut();
+            if let Some(tray) = &mut app.tray
+                && tray.notify(text.update_available, &message)
+            {
+                app.updates.notification_sent(release);
+            }
+        }
+        UpdateEvent::Checked(CheckMode::Manual, Ok(Check::Available(release)))
+        | UpdateEvent::NotificationActivated(release) => {
+            unsafe { SetForegroundWindow(hwnd) };
+            let confirmed = update_ui::confirm(hwnd, text, &release);
+            if unsafe { IsWindow(hwnd) } == 0 {
+                return;
+            }
+            if confirmed {
+                let result = state
+                    .borrow_mut()
+                    .updates
+                    .download(hwnd, release, language, demo);
+                match result {
+                    Ok(()) => return,
+                    Err(error) => show_error(text.update_download_error, &error),
+                }
+            }
+        }
+        UpdateEvent::Checked(CheckMode::Manual, Ok(Check::Current)) => {
+            message_box(text.update_current, MB_ICONINFORMATION)
+        }
+        UpdateEvent::Checked(CheckMode::Manual, Ok(Check::NoRelease)) => {
+            message_box(text.update_no_release, MB_ICONINFORMATION)
+        }
+        UpdateEvent::Checked(CheckMode::Manual, Err(error)) => {
+            show_error(text.update_check_error, &error);
+        }
+        UpdateEvent::Checked(CheckMode::Automatic, result) => {
+            if let Err(error) = result {
+                eprintln!("{} {error}", text.update_check_error);
+            }
+        }
+        UpdateEvent::Prepared(Err(error)) => show_error(text.update_download_error, &error),
+        UpdateEvent::Prepared(Ok(())) => {
+            if unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) } != 0 {
+                return;
+            }
+            show_error(text.update_apply_error, &io::Error::last_os_error());
+        }
+    }
+    state.borrow_mut().updates.reset();
 }
 
 unsafe extern "system" fn controller_proc(
@@ -593,10 +712,25 @@ unsafe extern "system" fn controller_proc(
                     }
                 }
                 Some(tray::Event::Menu) => open_tray_menu(hwnd, state),
+                Some(tray::Event::UpdateNotification) => {
+                    if let Ok(mut app) = state.try_borrow_mut() {
+                        app.updates.activate_notification();
+                    }
+                    handle_update(hwnd, state);
+                }
                 None => {}
             }
         }
         return 0;
+    }
+
+    if let Some(state) = state
+        && (message == update_ui::FINISHED || (message == WM_TIMER && wparam == DISPLAY_TIMER))
+    {
+        handle_update(hwnd, state);
+        if message == update_ui::FINISHED || unsafe { IsWindow(hwnd) } == 0 {
+            return 0;
+        }
     }
 
     if let Some(mut app) = state.and_then(|state| state.try_borrow_mut().ok()) {
@@ -605,6 +739,7 @@ unsafe extern "system" fn controller_proc(
             RELAYOUT => app.relayout(),
             LANGUAGE_CHANGED => app.refresh_language(),
             WM_TIMER if wparam == DISPLAY_TIMER => {
+                app.check_updates_in_background(hwnd);
                 if let Some(tray) = &mut app.tray {
                     tray.ensure_registered();
                 }

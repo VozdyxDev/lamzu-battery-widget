@@ -6,9 +6,10 @@ use windows_sys::Win32::{
     UI::{
         HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi},
         Shell::{
-            NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-            NIM_SETFOCUS, NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
-            NOTIFYICONIDENTIFIER, Shell_NotifyIconGetRect, Shell_NotifyIconW,
+            NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIIF_NOSOUND,
+            NIIF_RESPECT_QUIET_TIME, NIIF_USER, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS,
+            NIM_SETVERSION, NIN_BALLOONUSERCLICK, NIN_SELECT, NOTIFYICON_VERSION_4,
+            NOTIFYICONDATAW, NOTIFYICONIDENTIFIER, Shell_NotifyIconGetRect, Shell_NotifyIconW,
         },
         WindowsAndMessaging::*,
     },
@@ -18,6 +19,7 @@ use crate::{
     app::{PROJECT_NAME, wide},
     display::{Corner, Monitor},
     locale::Language,
+    update_ui::VERSION,
 };
 
 pub const CALLBACK_MESSAGE: u32 = WM_APP + 4;
@@ -33,12 +35,14 @@ const TOP_RIGHT: u32 = 5;
 const TOP_LEFT: u32 = 6;
 const BOTTOM_RIGHT: u32 = 7;
 const BOTTOM_LEFT: u32 = 8;
-const MAIN_MONITOR: u32 = 9;
+const CHECK_UPDATES: u32 = BOTTOM_LEFT + 1;
+const MAIN_MONITOR: u32 = CHECK_UPDATES + 1;
 const FIRST_MONITOR: u32 = MAIN_MONITOR + 1;
 
 pub enum Event {
     Toggle,
     Menu,
+    UpdateNotification,
 }
 
 pub fn event(lparam: LPARAM) -> Option<Event> {
@@ -50,6 +54,7 @@ pub fn event(lparam: LPARAM) -> Option<Event> {
     match packed & 0xffff {
         NIN_SELECT | NIN_KEYSELECT => Some(Event::Toggle),
         WM_CONTEXTMENU => Some(Event::Menu),
+        NIN_BALLOONUSERCLICK => Some(Event::UpdateNotification),
         _ => None,
     }
 }
@@ -59,7 +64,16 @@ pub enum Action {
     Monitor(Option<String>),
     Corner(Corner),
     ToggleAutostart,
+    CheckUpdates,
     Close,
+}
+
+pub struct MenuSettings<'a> {
+    pub language: Language,
+    pub autostart: Option<bool>,
+    pub selected_monitor: Option<&'a str>,
+    pub corner: Corner,
+    pub update_status: Option<&'static str>,
 }
 
 pub struct Tray {
@@ -89,14 +103,11 @@ impl Tray {
         if icon.is_null() {
             return;
         }
-        let tip = wide(PROJECT_NAME);
-        let mut tooltip = [0; 128];
-        tooltip[..tip.len()].copy_from_slice(&tip);
         let data = NOTIFYICONDATAW {
             uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
             uCallbackMessage: CALLBACK_MESSAGE,
             hIcon: icon,
-            szTip: tooltip,
+            szTip: fixed_wide(PROJECT_NAME),
             ..icon_data(self.hwnd)
         };
         // TaskbarCreated is also broadcast on some DPI changes when the icon still exists.
@@ -114,6 +125,29 @@ impl Tray {
                 unsafe { Shell_NotifyIconW(NIM_DELETE, &data) };
             }
         }
+    }
+
+    pub fn notify(&mut self, title: &str, message: &str) -> bool {
+        self.ensure_registered();
+        if !self.registered {
+            return false;
+        }
+
+        let icon = application_icon();
+        let icon_flag = if icon.is_null() { NIIF_INFO } else { NIIF_USER };
+        let data = NOTIFYICONDATAW {
+            uFlags: NIF_INFO,
+            szInfoTitle: fixed_wide(title),
+            szInfo: fixed_wide(message),
+            dwInfoFlags: icon_flag | NIIF_NOSOUND | NIIF_RESPECT_QUIET_TIME,
+            hBalloonIcon: icon,
+            ..icon_data(self.hwnd)
+        };
+        let sent = unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) != 0 };
+        if !icon.is_null() {
+            unsafe { DestroyIcon(icon) };
+        }
+        sent
     }
 
     pub fn taskbar_created(&mut self) {
@@ -144,17 +178,45 @@ fn icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     }
 }
 
-pub fn popup(
-    hwnd: HWND,
-    language: Language,
-    autostart: Option<bool>,
-    monitors: &[Monitor],
-    selected_monitor: Option<&str>,
-    corner: Corner,
-) -> Option<Action> {
+fn fixed_wide<const N: usize>(text: &str) -> [u16; N] {
+    let mut field = [0; N];
+    let mut offset = 0;
+    for ch in text.chars() {
+        let end = offset + ch.len_utf16();
+        if end >= N {
+            break;
+        }
+        ch.encode_utf16(&mut field[offset..end]);
+        offset = end;
+    }
+    field
+}
+
+pub fn popup(hwnd: HWND, monitors: &[Monitor], settings: MenuSettings<'_>) -> Option<Action> {
+    let MenuSettings {
+        language,
+        autostart,
+        selected_monitor,
+        corner,
+        update_status,
+    } = settings;
     let menu = PopupMenu::new()?;
     let languages = PopupMenu::new()?;
     let text = language.text();
+
+    let version = format!("{} {VERSION}", text.tray_version);
+    menu.item(0, MF_STRING | MF_GRAYED, &version)?;
+    let update_flags = if update_status.is_some() {
+        MF_GRAYED
+    } else {
+        MF_ENABLED
+    };
+    menu.item(
+        CHECK_UPDATES as usize,
+        MF_STRING | update_flags,
+        update_status.unwrap_or(text.tray_check_updates),
+    )?;
+    menu.item(0, MF_SEPARATOR, "")?;
 
     languages.item(ENGLISH as usize, MF_STRING, "English")?;
     languages.item(RUSSIAN as usize, MF_STRING, "Русский")?;
@@ -254,6 +316,7 @@ pub fn popup(
         TOP_LEFT => Some(Action::Corner(Corner::TopLeft)),
         BOTTOM_RIGHT => Some(Action::Corner(Corner::BottomRight)),
         BOTTOM_LEFT => Some(Action::Corner(Corner::BottomLeft)),
+        CHECK_UPDATES => Some(Action::CheckUpdates),
         AUTOSTART => Some(Action::ToggleAutostart),
         CLOSE => Some(Action::Close),
         command => {
@@ -333,5 +396,32 @@ fn application_icon() -> HICON {
             size,
             LR_DEFAULTCOLOR,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::UI::Shell::{NIN_BALLOONHIDE, NIN_BALLOONTIMEOUT};
+
+    #[test]
+    fn only_clicking_the_widget_notification_activates_it() {
+        let pack = |icon, message| ((icon << 16) | message) as LPARAM;
+        assert!(matches!(
+            event(pack(ICON_ID, NIN_BALLOONUSERCLICK)),
+            Some(Event::UpdateNotification)
+        ));
+        assert!(event(pack(ICON_ID + 1, NIN_BALLOONUSERCLICK)).is_none());
+        assert!(event(pack(ICON_ID, NIN_BALLOONHIDE)).is_none());
+        assert!(event(pack(ICON_ID, NIN_BALLOONTIMEOUT)).is_none());
+    }
+
+    #[test]
+    fn shell_text_stays_terminated_and_keeps_surrogate_pairs_intact() {
+        assert_eq!(fixed_wide::<3>("a🙂"), [u16::from(b'a'), 0, 0]);
+        assert_eq!(
+            fixed_wide::<4>("a🙂b"),
+            [u16::from(b'a'), 0xd83d, 0xde42, 0]
+        );
     }
 }

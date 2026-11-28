@@ -15,6 +15,12 @@ mod registry;
 #[cfg(windows)]
 mod tray;
 #[cfg(windows)]
+mod update;
+#[cfg(windows)]
+mod update_apply;
+#[cfg(windows)]
+mod update_ui;
+#[cfg(windows)]
 mod wallpaper;
 
 #[cfg(windows)]

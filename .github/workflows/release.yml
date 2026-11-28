@@ -14,6 +14,8 @@ jobs:
   build:
     if: ${{ github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release/v') }}
     uses: ./.github/workflows/build.yml
+    with:
+      release_branch: ${{ github.event.ref }}
 
   release:
     name: Publish GitHub release
@@ -21,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.build.outputs.version }}
     steps:
       - name: Check out the release commit and its history
         uses: actions/checkout@v7
@@ -39,11 +43,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$GITHUB_REF" != refs/heads/release/v* ]]; then
-            printf 'Expected a release/v* branch, got %s.\n' "$GITHUB_REF" >&2
+          if [[ -z "$RELEASE_VERSION" || "$GITHUB_REF" != "refs/heads/release/v$RELEASE_VERSION" ]]; then
+            printf 'The build version %s does not match the release branch %s.\n' "$RELEASE_VERSION" "$GITHUB_REF" >&2
             exit 1
           fi
-          tag="${GITHUB_REF_NAME#release/}"
+          tag="v$RELEASE_VERSION"
           tag_ref="refs/tags/$tag"
           asset_names=(
             'LAMZU-Battery-Widget-windows-x64.zip'
@@ -111,7 +115,7 @@ jobs:
             revision="$previous_commit..$commit"
           fi
 
-          changes=$(git log --format='- %s (`%h`)' "$revision")
+          changes=$(git log --format="- %s ([\`%h\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/%H))" "$revision")
           {
             printf '## Changes\n\n'
             if [[ -n "$changes" ]]; then
@@ -129,8 +133,8 @@ jobs:
       - name: Delete the published release branch
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" != refs/heads/release/v* ]]; then
-            printf 'Refusing to delete a branch outside release/v*: %s\n' "$GITHUB_REF" >&2
+          if [[ -z "$RELEASE_VERSION" || "$GITHUB_REF" != "refs/heads/release/v$RELEASE_VERSION" ]]; then
+            printf 'Refusing to delete branch %s for build version %s.\n' "$GITHUB_REF" "$RELEASE_VERSION" >&2
             exit 1
           fi
           remote_branch=$(git ls-remote --refs origin "$GITHUB_REF")
